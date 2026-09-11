@@ -2497,6 +2497,7 @@ void FrameBuffer::Impl::cleanupProcGLObjects(uint64_t puid) {
 
 std::vector<HandleType> FrameBuffer::Impl::cleanupProcGLObjects_locked(uint64_t puid, bool forced)
     NO_THREAD_SAFETY_ANALYSIS {
+    sweepColorBuffersLocked();
     std::vector<HandleType> colorBuffersToCleanup;
     {
         std::unique_ptr<RecursiveScopedContextBind> bind = nullptr;

@@ -454,7 +454,7 @@ intptr_t RenderThread::main() {
             }
 
             if (!tInfo->m_puid) {
-                tInfo->m_puid = mContextId;
+                tInfo->setPuid(mContextId);
             }
 
             if (!processResources && tInfo->m_puid && tInfo->m_puid != INVALID_CONTEXT_ID) {
@@ -462,7 +462,7 @@ intptr_t RenderThread::main() {
             }
 
             progress = false;
-            size_t last;
+            size_t last = 0;
 
             //
             // try to process some of the command buffer using the
@@ -471,9 +471,6 @@ intptr_t RenderThread::main() {
             // Note: It's risky to limit Vulkan decoding to one thread,
             // so we do it outside the limiter
             if (tInfo->m_vkInfo) {
-                if (tInfo->m_vkInfo->ctx_id == 0) {
-                    tInfo->m_vkInfo->ctx_id = mContextId;
-                }
                 VkDecoderContext context = {
                     .processName = contextName,
                     .gfxApiLogger = &gfxLogger,

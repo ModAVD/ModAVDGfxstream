@@ -53,6 +53,9 @@ struct RenderThreadInfo {
     void initGl(gl::EmulationGl* emulationGl);
 #endif
 
+    void setPuid(uint64_t puid);
+    uint64_t getPuid() const { return m_puid; };
+
     // The unique id of owner guest process of this render thread
     uint64_t m_puid = 0;
     std::optional<std::string> m_processName;

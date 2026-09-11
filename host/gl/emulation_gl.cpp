@@ -1003,6 +1003,8 @@ HandleType EmulationGl::createEmulatedEglContext(uint32_t emulatedConfigIndex,
     uint64_t puid = tinfo->m_puid;
     if (puid) {
         mProcOwnedEmulatedEglContexts[puid].insert(handle);
+    } else {
+        tinfo->m_contextSet.insert(handle);
     }
     return handle;
 }
@@ -1327,40 +1329,46 @@ HandleType EmulationGl::getWindowSurfaceColorBufferHandle(HandleType surfaceHand
 }
 
 std::vector<HandleType> EmulationGl::cleanupProcGLObjects(uint64_t puid) {
-    RecursiveScopedContextBind bind(getColorBufferContextHelper());
     std::vector<HandleType> colorBuffersToCleanUp;
+    {
+        RecursiveScopedContextBind bind(getColorBufferContextHelper());
 
-    // Clean up window surfaces
-    auto procWindowsIt = mProcOwnedEmulatedEglWindowSurfaces.find(puid);
-    if (procWindowsIt != mProcOwnedEmulatedEglWindowSurfaces.end()) {
-        for (auto whndl : procWindowsIt->second) {
-            auto w = mWindows.find(whndl);
-            if (w != mWindows.end()) {
-                if (w->second.second != 0) {
-                    colorBuffersToCleanUp.push_back(w->second.second);
+        // Clean up window surfaces
+        auto procWindowsIt = mProcOwnedEmulatedEglWindowSurfaces.find(puid);
+        if (procWindowsIt != mProcOwnedEmulatedEglWindowSurfaces.end()) {
+            for (auto whndl : procWindowsIt->second) {
+                auto w = mWindows.find(whndl);
+                if (w != mWindows.end()) {
+                    if (w->second.second != 0) {
+                        colorBuffersToCleanUp.push_back(w->second.second);
+                    }
+                    mWindows.erase(w);
                 }
-                mWindows.erase(w);
             }
+            mProcOwnedEmulatedEglWindowSurfaces.erase(procWindowsIt);
         }
-        mProcOwnedEmulatedEglWindowSurfaces.erase(procWindowsIt);
+
+        // Cleanup EGLImages
+        auto procImagesIt = mProcOwnedEmulatedEglImages.find(puid);
+        if (procImagesIt != mProcOwnedEmulatedEglImages.end()) {
+            for (auto image : procImagesIt->second) {
+                mImages.erase(image);
+            }
+            mProcOwnedEmulatedEglImages.erase(procImagesIt);
+        }
     }
 
+    // Unbind before cleaning up contexts
     // Cleanup render contexts
-    auto procContextsIt = mProcOwnedEmulatedEglContexts.find(puid);
-    if (procContextsIt != mProcOwnedEmulatedEglContexts.end()) {
-        for (auto ctx : procContextsIt->second) {
-            mContexts.erase(ctx);
+    {
+        gfxstream::base::AutoWriteLock contextLock(mContextStructureLock);
+        auto procContextsIt = mProcOwnedEmulatedEglContexts.find(puid);
+        if (procContextsIt != mProcOwnedEmulatedEglContexts.end()) {
+            for (auto ctx : procContextsIt->second) {
+                mContexts.erase(ctx);
+            }
+            mProcOwnedEmulatedEglContexts.erase(procContextsIt);
         }
-        mProcOwnedEmulatedEglContexts.erase(procContextsIt);
-    }
-
-    // Cleanup EGLImages
-    auto procImagesIt = mProcOwnedEmulatedEglImages.find(puid);
-    if (procImagesIt != mProcOwnedEmulatedEglImages.end()) {
-        for (auto image : procImagesIt->second) {
-            mImages.erase(image);
-        }
-        mProcOwnedEmulatedEglImages.erase(procImagesIt);
     }
     return colorBuffersToCleanUp;
 }

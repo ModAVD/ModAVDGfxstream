@@ -1234,7 +1234,9 @@ static void rcSetPuid(uint64_t puid) {
     }
 
     RenderThreadInfo *tInfo = RenderThreadInfo::get();
-    tInfo->m_puid = puid;
+    tInfo->setPuid(puid);
+
+    // TODO(b/560140165): remove RenderThreadInfoVk::get and separate thread local storage
     auto* renderThreadInfoVk = vk::RenderThreadInfoVk::get();
     if (renderThreadInfoVk) {
         renderThreadInfoVk->ctx_id = puid;
