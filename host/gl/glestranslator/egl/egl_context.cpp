@@ -160,8 +160,8 @@ EglContext::~EglContext()
     // restore the previous context
     //
     if (rebindCtx) {
-        m_dpy->nativeType()->makeCurrent(rebindRead->native(),
-                                         rebindDraw->native(),
+        m_dpy->nativeType()->makeCurrent(rebindRead.get() ? rebindRead->native() : nullptr,
+                                         rebindDraw.get() ? rebindDraw->native() : nullptr,
                                          rebindCtx->nativeType());
     } else {
         m_dpy->nativeType()->makeCurrent(nullptr, nullptr, nullptr);
