@@ -405,6 +405,67 @@ TEST(VkFormatUtilsTest, GetTransferInfoDepthStencilWithDepth) {
                             })));
 }
 
+TEST(VkFormatUtilsTest, GetTransferInfoLargeExtentNoUint32Overflow) {
+    // 16384 * 16384 * 16 bytes/pixel (R32G32B32A32_SFLOAT) = 4,294,967,296 bytes (2^32).
+    // Verify stagingBufferCopySize does not wrap around to 0 in 32-bit arithmetic (b/514121060).
+    const VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    const uint32_t width = 16384;
+    const uint32_t height = 16384;
+
+    TransferInfo transferInfo;
+    ASSERT_THAT(getFormatTransferInfo(format, {width, height, 1}, &transferInfo), IsTrue());
+    EXPECT_THAT(transferInfo.stagingBufferCopySize, Eq(4294967296ULL));
+    ASSERT_THAT(transferInfo.bufferImageCopies,
+                ElementsAre(EqsVkBufferImageCopy(VkBufferImageCopy{
+                    .bufferOffset = 0,
+                    .bufferRowLength = 16384,
+                    .bufferImageHeight = 0,
+                    .imageSubresource =
+                        {
+                            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                            .mipLevel = 0,
+                            .baseArrayLayer = 0,
+                            .layerCount = 1,
+                        },
+                    .imageOffset =
+                        {
+                            .x = 0,
+                            .y = 0,
+                            .z = 0,
+                        },
+                    .imageExtent =
+                        {
+                            .width = 16384,
+                            .height = 16384,
+                            .depth = 1,
+                        },
+                })));
+}
+
+TEST(VkFormatUtilsTest, GetTransferInfoMultiPlaneLargeOffsetNoUint32Overflow) {
+    // Verify planeOffset for a second plane beyond 4 GiB is preserved as a 64-bit VkDeviceSize.
+    const VkFormat format = VK_FORMAT_D24_UNORM_S8_UINT;
+    const uint32_t width = 32768;
+    const uint32_t height = 32768;
+
+    TransferInfo transferInfo;
+    ASSERT_THAT(getFormatTransferInfo(format, {width, height, 1}, &transferInfo), IsTrue());
+    // Depth plane (4 bytes/pixel): 32768 * 32768 * 4 = 4,294,967,296 bytes (4 GiB)
+    // Stencil plane (1 byte/pixel): 32768 * 32768 * 1 = 1,073,741,824 bytes (1 GiB)
+    EXPECT_THAT(transferInfo.stagingBufferCopySize, Eq(5368709120ULL));
+    ASSERT_THAT(transferInfo.bufferImageCopies.size(), Eq(2u));
+    EXPECT_THAT(transferInfo.bufferImageCopies[0].bufferOffset, Eq(0ULL));
+    EXPECT_THAT(transferInfo.bufferImageCopies[1].bufferOffset, Eq(4294967296ULL));
+}
+
+TEST(VkFormatUtilsTest, GetTransferInfoWidthAlignmentOverflowReturnsFalse) {
+    // VK_FORMAT_G8_B8R8_2PLANE_420_UNORM aligns width to a multiple of 2.
+    // UINT32_MAX + 1 overflows uint32_t and must fail rather than wrapping alignedWidth to 0.
+    const VkFormat format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+    TransferInfo transferInfo;
+    EXPECT_THAT(getFormatTransferInfo(format, {UINT32_MAX, 16, 1}, &transferInfo), IsFalse());
+}
+
 }  // namespace
 }  // namespace vk
 }  // namespace host

@@ -3457,6 +3457,14 @@ bool VkEmulation::readColorBufferToBytes(uint32_t colorBufferHandle, std::vector
         return false;
     }
 
+    if (transferInfo.stagingBufferCopySize > mStaging.mAllocationSize) {
+        GFXSTREAM_ERROR("Failed to read from ColorBuffer:%d, transfer size %" PRIu64
+                        " too large for staging buffer size:%" PRIu64 ".",
+                        colorBufferHandle, transferInfo.stagingBufferCopySize,
+                        mStaging.mAllocationSize);
+        return false;
+    }
+
     bytes->resize(transferInfo.stagingBufferCopySize);
 
     result = readColorBufferToBytesLocked(
@@ -4316,6 +4324,12 @@ bool VkEmulation::clearColorBuffer(uint32_t colorBufferHandle) {
     }
 
     VkDeviceSize dstBufferSize = transferInfo.stagingBufferCopySize;
+    if (dstBufferSize > mStaging.mAllocationSize) {
+        GFXSTREAM_ERROR("Failed to clear ColorBuffer:%d, transfer size %" PRIu64
+                        " too large for staging buffer size:%" PRIu64 ".",
+                        colorBufferHandle, dstBufferSize, mStaging.mAllocationSize);
+        return false;
+    }
     const std::vector<uint8_t> clearData(dstBufferSize, 0);
     return updateColorBufferFromBytesLocked(
         colorBufferHandle, 0, 0, colorBufferInfo->imageCreateInfoShallow.extent.width,

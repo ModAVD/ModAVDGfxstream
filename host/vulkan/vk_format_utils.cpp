@@ -14,6 +14,7 @@
 
 #include "vk_format_utils.h"
 
+#include <limits>
 #include <unordered_map>
 
 #include "gfxstream/common/logging.h"
@@ -33,7 +34,8 @@ struct FormatPlaneLayout {
     VkImageAspectFlags aspectMask = 0;
 };
 
-inline uint32_t alignToPower2(uint32_t val, uint32_t align) {
+template <typename T>
+inline T alignToPower2(T val, T align) {
     return (val + (align - 1)) & ~(align - 1);
 }
 
@@ -45,13 +47,13 @@ struct FormatPlaneLayouts {
 };
 
 void PackD16S8(const VkExtent3D& extent, const uint8_t* src, uint8_t* dst) {
-    const uint32_t numPixels = extent.width * extent.height * extent.depth;
-    const uint32_t plane0Size = numPixels * 2;
-    const uint32_t plane1Offset = alignToPower2(plane0Size, 4);
+    const size_t numPixels = static_cast<size_t>(extent.width) * extent.height * extent.depth;
+    const size_t plane0Size = numPixels * 2;
+    const size_t plane1Offset = alignToPower2<size_t>(plane0Size, 4);
     const uint8_t* srcPixels = src;
     uint8_t* dstDepth = dst;
     uint8_t* dstStencil = dst + plane1Offset;
-    for (uint32_t i = 0; i < numPixels; ++i) {
+    for (size_t i = 0; i < numPixels; ++i) {
         dstDepth[i * 2 + 0] = srcPixels[i * 3 + 0];
         dstDepth[i * 2 + 1] = srcPixels[i * 3 + 1];
         dstStencil[i] = srcPixels[i * 3 + 2];
@@ -59,13 +61,13 @@ void PackD16S8(const VkExtent3D& extent, const uint8_t* src, uint8_t* dst) {
 }
 
 void UnpackD16S8(const VkExtent3D& extent, const uint8_t* src, uint8_t* dst) {
-    const uint32_t numPixels = extent.width * extent.height * extent.depth;
-    const uint32_t plane0Size = numPixels * 2;
-    const uint32_t plane1Offset = alignToPower2(plane0Size, 4);
+    const size_t numPixels = static_cast<size_t>(extent.width) * extent.height * extent.depth;
+    const size_t plane0Size = numPixels * 2;
+    const size_t plane1Offset = alignToPower2<size_t>(plane0Size, 4);
     const uint8_t* srcDepth = src;
     const uint8_t* srcStencil = src + plane1Offset;
     uint8_t* dstPixels = dst;
-    for (uint32_t i = 0; i < numPixels; ++i) {
+    for (size_t i = 0; i < numPixels; ++i) {
         dstPixels[i * 3 + 0] = srcDepth[i * 2 + 0];
         dstPixels[i * 3 + 1] = srcDepth[i * 2 + 1];
         dstPixels[i * 3 + 2] = srcStencil[i];
@@ -75,13 +77,13 @@ void UnpackD16S8(const VkExtent3D& extent, const uint8_t* src, uint8_t* dst) {
 // Per the Vulkan spec, buffer copies of the depth aspect of D24 formats use
 // VK_FORMAT_X8_D24_UNORM_PACK32: one 32-bit word per texel, upper 8 bits unused.
 void PackD24S8(const VkExtent3D& extent, const uint8_t* src, uint8_t* dst) {
-    const uint32_t numPixels = extent.width * extent.height * extent.depth;
-    const uint32_t plane0Size = numPixels * 4;
-    const uint32_t plane1Offset = alignToPower2(plane0Size, 4);
+    const size_t numPixels = static_cast<size_t>(extent.width) * extent.height * extent.depth;
+    const size_t plane0Size = numPixels * 4;
+    const size_t plane1Offset = alignToPower2<size_t>(plane0Size, 4);
     const uint8_t* srcPixels = src;
     uint8_t* dstDepth = dst;
     uint8_t* dstStencil = dst + plane1Offset;
-    for (uint32_t i = 0; i < numPixels; ++i) {
+    for (size_t i = 0; i < numPixels; ++i) {
         dstDepth[i * 4 + 0] = srcPixels[i * 4 + 0];
         dstDepth[i * 4 + 1] = srcPixels[i * 4 + 1];
         dstDepth[i * 4 + 2] = srcPixels[i * 4 + 2];
@@ -92,13 +94,13 @@ void PackD24S8(const VkExtent3D& extent, const uint8_t* src, uint8_t* dst) {
 }
 
 void UnpackD24S8(const VkExtent3D& extent, const uint8_t* src, uint8_t* dst) {
-    const uint32_t numPixels = extent.width * extent.height * extent.depth;
-    const uint32_t plane0Size = numPixels * 4;
-    const uint32_t plane1Offset = alignToPower2(plane0Size, 4);
+    const size_t numPixels = static_cast<size_t>(extent.width) * extent.height * extent.depth;
+    const size_t plane0Size = numPixels * 4;
+    const size_t plane1Offset = alignToPower2<size_t>(plane0Size, 4);
     const uint8_t* srcDepth = src;
     const uint8_t* srcStencil = src + plane1Offset;
     uint8_t* dstPixels = dst;
-    for (uint32_t i = 0; i < numPixels; ++i) {
+    for (size_t i = 0; i < numPixels; ++i) {
         dstPixels[i * 4 + 0] = srcDepth[i * 4 + 0];
         dstPixels[i * 4 + 1] = srcDepth[i * 4 + 1];
         dstPixels[i * 4 + 2] = srcDepth[i * 4 + 2];
@@ -107,13 +109,13 @@ void UnpackD24S8(const VkExtent3D& extent, const uint8_t* src, uint8_t* dst) {
 }
 
 void PackD32S8(const VkExtent3D& extent, const uint8_t* src, uint8_t* dst) {
-    const uint32_t numPixels = extent.width * extent.height * extent.depth;
-    const uint32_t plane0Size = numPixels * 4;
-    const uint32_t plane1Offset = alignToPower2(plane0Size, 4);
+    const size_t numPixels = static_cast<size_t>(extent.width) * extent.height * extent.depth;
+    const size_t plane0Size = numPixels * 4;
+    const size_t plane1Offset = alignToPower2<size_t>(plane0Size, 4);
     const uint8_t* srcPixels = src;
     uint8_t* dstDepth = dst;
     uint8_t* dstStencil = dst + plane1Offset;
-    for (uint32_t i = 0; i < numPixels; ++i) {
+    for (size_t i = 0; i < numPixels; ++i) {
         dstDepth[i * 4 + 0] = srcPixels[i * 5 + 0];
         dstDepth[i * 4 + 1] = srcPixels[i * 5 + 1];
         dstDepth[i * 4 + 2] = srcPixels[i * 5 + 2];
@@ -123,13 +125,13 @@ void PackD32S8(const VkExtent3D& extent, const uint8_t* src, uint8_t* dst) {
 }
 
 void UnpackD32S8(const VkExtent3D& extent, const uint8_t* src, uint8_t* dst) {
-    const uint32_t numPixels = extent.width * extent.height * extent.depth;
-    const uint32_t plane0Size = numPixels * 4;
-    const uint32_t plane1Offset = alignToPower2(plane0Size, 4);
+    const size_t numPixels = static_cast<size_t>(extent.width) * extent.height * extent.depth;
+    const size_t plane0Size = numPixels * 4;
+    const size_t plane1Offset = alignToPower2<size_t>(plane0Size, 4);
     const uint8_t* srcDepth = src;
     const uint8_t* srcStencil = src + plane1Offset;
     uint8_t* dstPixels = dst;
-    for (uint32_t i = 0; i < numPixels; ++i) {
+    for (size_t i = 0; i < numPixels; ++i) {
         dstPixels[i * 5 + 0] = srcDepth[i * 4 + 0];
         dstPixels[i * 5 + 1] = srcDepth[i * 4 + 1];
         dstPixels[i * 5 + 2] = srcDepth[i * 4 + 2];
@@ -455,22 +457,31 @@ bool getFormatTransferInfo(VkFormat format, VkExtent3D extent, TransferInfo* out
         }
     }
 
-    const uint32_t alignedWidth = alignToPower2(extent.width, alignmentPixels);
+    const VkDeviceSize alignedWidth64 =
+        alignToPower2<VkDeviceSize>(extent.width, alignmentPixels);
+    if (alignedWidth64 > std::numeric_limits<uint32_t>::max()) {
+        GFXSTREAM_ERROR("Overflow aligning width %u with alignment %u", extent.width,
+                        alignmentPixels);
+        return false;
+    }
+    const uint32_t alignedWidth = static_cast<uint32_t>(alignedWidth64);
     const uint32_t alignedHeight = extent.height;
-    uint32_t cumulativeOffset = 0;
+    VkDeviceSize cumulativeOffset = 0;
 
     outTransferInfo->bufferImageCopies.clear();
     for (const FormatPlaneLayout& planeInfo : formatInfo->planeLayouts) {
         // Align to 4 for VUID-vkCmdCopyBufferToImage-dstImage-07978
-        const uint32_t planeOffset = (formatInfo->packFunction || formatInfo->unpackFunction)
-                                         ? alignToPower2(cumulativeOffset, 4)
-                                         : cumulativeOffset;
+        const VkDeviceSize planeOffset = (formatInfo->packFunction || formatInfo->unpackFunction)
+                                             ? alignToPower2<VkDeviceSize>(cumulativeOffset, 4)
+                                             : cumulativeOffset;
         const uint32_t planeWidth = alignedWidth / planeInfo.horizontalSubsampling;
         const uint32_t planeHeight = alignedHeight / planeInfo.verticalSubsampling;
-        const uint32_t planeBpp = planeInfo.sampleIncrementBytes;
+        const VkDeviceSize planeBpp = planeInfo.sampleIncrementBytes;
         const uint32_t planeStrideTexels = planeWidth;
-        const uint32_t planeStrideBytes = planeStrideTexels * planeBpp;
-        const uint32_t planeSize = planeHeight * planeStrideBytes * extent.depth;
+        const VkDeviceSize planeStrideBytes =
+            static_cast<VkDeviceSize>(planeStrideTexels) * planeBpp;
+        const VkDeviceSize planeSize =
+            static_cast<VkDeviceSize>(planeHeight) * planeStrideBytes * extent.depth;
 
         outTransferInfo->bufferImageCopies.emplace_back(VkBufferImageCopy{
             .bufferOffset = planeOffset,
