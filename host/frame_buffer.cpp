@@ -2819,7 +2819,10 @@ void FrameBuffer::Impl::flushReadPipeline(int displayId) {
 void FrameBuffer::Impl::ensureReadbackWorker() {
 #if GFXSTREAM_ENABLE_HOST_GLES
     if (!m_readbackWorker) {
-        ENSURE_GL_EMULATION_VOID();
+        // MAS: Vulkan-only (GuestAngle) has no GL emulation and therefore no ReadbackWorker; every
+        // caller handles null (patch 0004). This runs once per posted frame, so do not log here
+        // (ENSURE_GL_EMULATION_VOID printed ~100 ERROR lines/s).
+        if (!m_emulationGl) return;
         m_readbackWorker = m_emulationGl->getReadbackWorker();
     }
 #endif
