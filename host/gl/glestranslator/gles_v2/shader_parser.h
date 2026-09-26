@@ -35,6 +35,10 @@ public:
             const GLint* length);
     const std::string& getOriginalSrc() const;
     const GLchar** parsedLines();
+    // MAS: replace the source handed to the host driver (used by the ESSL 310
+    // compute -> GLSL 430 fallback in glCompileShader, so snapshot restore
+    // recompiles the same text).
+    void setParsedSrc(const std::string& src) { m_parsedSrc = src; }
     void           clear();
     GLenum         getType();
 
