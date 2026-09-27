@@ -3119,7 +3119,28 @@ bool VkEmulation::createVkColorBufferLocked(uint32_t width, uint32_t height,
         VkImageMemoryRequirementsInfo2 info{VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2,
                                             nullptr, infoPtr->image};
         vk->vkGetImageMemoryRequirements2KHR(mDevice, &info, &reqs);
-        useDedicated = dedicated_reqs.requiresDedicatedAllocation;
+        // Also honor prefersDedicatedAllocation. ColorBuffer memory is exported and bound again
+        // in the guests' VkDevices (ANB swapchain images, AHB imports). Observed with
+        // GuestVulkanOnly on NVIDIA (Windows): with non-dedicated memory a few percent of the
+        // ColorBuffers never show what a guest device rendered into them when read through this
+        // VkDevice (readback, composition): all zero, i.e. black frames on screen, in screenshots
+        // and in the screencap shared memory, while other guest devices see the content.
+        // ANDROID_EMU_VK_IGNORE_PREFERRED_DEDICATED=1 restores the old behavior.
+        static const bool sIgnorePreferred =
+            gfxstream::base::getEnvironmentVariable("ANDROID_EMU_VK_IGNORE_PREFERRED_DEDICATED") ==
+            "1";
+        useDedicated = dedicated_reqs.requiresDedicatedAllocation ||
+                       (dedicated_reqs.prefersDedicatedAllocation && !sIgnorePreferred);
+        // mMutex is held here.
+        static bool sLoggedPreferred = false;
+        if (dedicated_reqs.prefersDedicatedAllocation && !dedicated_reqs.requiresDedicatedAllocation &&
+            !sLoggedPreferred) {
+            sLoggedPreferred = true;
+            GFXSTREAM_INFO("ColorBuffer %u (%ux%u %s): driver prefers a dedicated allocation, %s",
+                           colorBufferHandle, width, height, string_VkFormat(vkFormat),
+                           sIgnorePreferred ? "ignored (ANDROID_EMU_VK_IGNORE_PREFERRED_DEDICATED=1)"
+                                            : "using one");
+        }
         infoPtr->imageMemReqs = reqs.memoryRequirements;
     } else {
         vk->vkGetImageMemoryRequirements(mDevice, infoPtr->image, &infoPtr->imageMemReqs);
