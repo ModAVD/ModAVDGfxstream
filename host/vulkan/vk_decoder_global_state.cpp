@@ -11058,6 +11058,25 @@ class VkDecoderGlobalState::Impl {
 
         res.createInfo.pDescriptorUpdateEntries = res.linearizedTemplateEntries.data();
 
+        // MAS local diagnostic (not for upstream): templates with array entries are the ones the
+        // old per-entry offsets got wrong.
+        {
+            uint32_t arrayEntries = 0;
+            uint32_t maxCount = 0;
+            for (const auto& e : res.linearizedTemplateEntries) {
+                if (e.descriptorType != VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT &&
+                    e.descriptorCount > 1) {
+                    ++arrayEntries;
+                    maxCount = std::max(maxCount, e.descriptorCount);
+                }
+            }
+            static std::atomic<uint32_t> sLogged{0};
+            if (arrayEntries && sLogged.fetch_add(1) < 20) {
+                GFXSTREAM_INFO("MAS: descriptor update template with %u array entries (max count %u) of %u",
+                               arrayEntries, maxCount, pCreateInfo->descriptorUpdateEntryCount);
+            }
+        }
+
         return res;
     }
 
