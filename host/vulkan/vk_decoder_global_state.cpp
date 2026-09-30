@@ -6649,6 +6649,16 @@ class VkDecoderGlobalState::Impl {
         //  * For complete correctness, we may need "getGuestOsLogic" logic somewhere in
         //    the future.
         const bool hostVisible = memoryPropertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+        // MAS local diagnostic (not for upstream): which memory types a guest maps (plan P2.6).
+        if (hostVisible) {
+            static std::atomic<uint32_t> sLoggedAllocs{0};
+            if (sLoggedAllocs.fetch_add(1) < 300) {
+                GFXSTREAM_INFO("MAS: host-visible alloc VkDevice:%p guest type %u -> host type %u flags 0x%x size %llu",
+                               device, pAllocateInfo->memoryTypeIndex, localAllocInfo.memoryTypeIndex,
+                               memoryPropertyFlags,
+                               (unsigned long long)localAllocInfo.allocationSize);
+            }
+        }
         bool importEmulatedExternalMemory = importCbInfoPtr || importBufferInfoPtr;
         const bool emulateHostVisible = hostVisible && !importEmulatedExternalMemory;
 
