@@ -6617,6 +6617,36 @@ class VkDecoderGlobalState::Impl {
             localAllocInfo.memoryTypeIndex = hostMemoryInfo.index;
             memoryPropertyFlags = hostMemoryInfo.memoryType.propertyFlags;
 
+            // MAS experiment (plan P2.6), ANDROID_EMU_VK_WC_AS_CACHED=1: back guest allocations of
+            // a host-visible, uncached, non-device-local type (NVIDIA's write-combined system
+            // memory) with a host-cached coherent type on the same heap. The guest writes its
+            // uploads straight into this memory through the address space mapping; with the
+            // write-combined type that copy loop takes a third of Star Rail's render thread.
+            static const bool sWcAsCached =
+                gfxstream::base::getEnvironmentVariable("ANDROID_EMU_VK_WC_AS_CACHED") == "1";
+            constexpr VkMemoryPropertyFlags kCachedCoherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                                              VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+            if (sWcAsCached && (memoryPropertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
+                !(memoryPropertyFlags & (VK_MEMORY_PROPERTY_HOST_CACHED_BIT |
+                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) &&
+                !importCbInfoPtr && !importBufferInfoPtr && !createBlobInfoPtr &&
+                !(dedicatedAllocInfoPtr && dedicatedAllocInfoPtr->image != VK_NULL_HANDLE)) {
+                for (uint32_t i = 0; i < VK_MAX_MEMORY_TYPES; ++i) {
+                    const auto candidate =
+                        physicalDeviceInfo->memoryPropertiesHelper
+                            ->getHostMemoryInfoFromHostMemoryTypeIndex(i);
+                    if (!candidate) break;
+                    if (candidate->memoryType.heapIndex == hostMemoryInfo.memoryType.heapIndex &&
+                        (candidate->memoryType.propertyFlags & kCachedCoherent) == kCachedCoherent &&
+                        !(candidate->memoryType.propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+                        localAllocInfo.memoryTypeIndex = candidate->index;
+                        memoryPropertyFlags = candidate->memoryType.propertyFlags;
+                        break;
+                    }
+                }
+            }
+
             auto virtioGpuContextIdOpt = getContextIdForDeviceLocked(device);
             if (!virtioGpuContextIdOpt) {
                 GFXSTREAM_ERROR("VkDevice:%p missing context id for vkAllocateMemory().");
