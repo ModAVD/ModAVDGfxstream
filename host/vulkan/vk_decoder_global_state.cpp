@@ -6617,13 +6617,15 @@ class VkDecoderGlobalState::Impl {
             localAllocInfo.memoryTypeIndex = hostMemoryInfo.index;
             memoryPropertyFlags = hostMemoryInfo.memoryType.propertyFlags;
 
-            // MAS experiment (plan P2.6), ANDROID_EMU_VK_WC_AS_CACHED=1: back guest allocations of
-            // a host-visible, uncached, non-device-local type (NVIDIA's write-combined system
-            // memory) with a host-cached coherent type on the same heap. The guest writes its
-            // uploads straight into this memory through the address space mapping; with the
-            // write-combined type that copy loop takes a third of Star Rail's render thread.
+            // MAS (plan P2.6), on by default, ANDROID_EMU_VK_WC_AS_CACHED=0 turns it off: back guest
+            // allocations of a host-visible, uncached, non-device-local type (NVIDIA's
+            // write-combined system memory) with a host-cached coherent type on the same heap. The
+            // guest writes its uploads straight into this memory through the address space
+            // mapping; with the write-combined type that copy loop takes a third of Star Rail's
+            // render thread (ANGLE's memcpy almost half). Without a cached coherent type on the
+            // heap the allocation keeps its type.
             static const bool sWcAsCached =
-                gfxstream::base::getEnvironmentVariable("ANDROID_EMU_VK_WC_AS_CACHED") == "1";
+                gfxstream::base::getEnvironmentVariable("ANDROID_EMU_VK_WC_AS_CACHED") != "0";
             constexpr VkMemoryPropertyFlags kCachedCoherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
                                                               VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
