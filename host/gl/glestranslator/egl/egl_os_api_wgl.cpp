@@ -1174,6 +1174,9 @@ public:
                 }
                 if (error != 0 || --count <= 0) {
                     D("Error: wglMakeCurrent() failed, error %lu\n", error);
+                    // MAS local: always log the failure with the thread.
+                    GFXSTREAM_ERROR("MAS: wglMakeCurrent(%p, %p) failed on thread %lu with error 0x%lx",
+                                    hdcDraw, hdcContext, GetCurrentThreadId(), error);
                     return false;
                 }
                 Sleep(16);

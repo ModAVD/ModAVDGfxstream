@@ -14,13 +14,24 @@
 
 #include "display_surface_gl.h"
 
+#include <stdint.h>
 #include <stdio.h>
 
+#include <atomic>
 #include <vector>
+
+#ifdef _WIN32
+#include <intrin.h>
+#include <windows.h>
+#define MAS_RETURN_ADDRESS() _ReturnAddress()
+#else
+#define MAS_RETURN_ADDRESS() __builtin_return_address(0)
+#endif
 
 #include "OpenGLESDispatch/DispatchTables.h"
 #include "OpenGLESDispatch/EGLDispatch.h"
 #include "gfxstream/common/logging.h"
+#include "gfxstream/threads/Thread.h"
 
 namespace gfxstream {
 namespace host {
@@ -79,15 +90,41 @@ class DisplaySurfaceGlContextHelper : public ContextHelper {
                 // Fall through to attempt to recover from error.
             }
 
+            // MAS local: the WGL backend can report a failed bind as success, so check the
+            // owner before binding instead of relying on the result.
+            const void* const site = MAS_RETURN_ADDRESS();
+            const unsigned long self = gfxstream::base::getCurrentThreadId();
+            const unsigned long owner = mOwnerThread.load();
+            if (owner != 0 && owner != self) {
+                const SiteName mine = describeSite(site);
+                const SiteName theirs = describeSite(mOwnerSite.load());
+                GFXSTREAM_ERROR(
+                    "MAS: thread %lu (site %s+0x%llx) binds context %p while thread %lu "
+                    "(site %s+0x%llx) still has it bound",
+                    self, mine.module, mine.offset, mContext, owner, theirs.module,
+                    theirs.offset);
+            }
+
             if (!s_egl.eglMakeCurrent(mDisplay, mSurface, mSurface, mContext)) {
                 // b/284523053
                 // Legacy swiftshader logspam on exit with this line.
                 GFXSTREAM_DEBUG("Failed to make display surface context current: %d",
                                 s_egl.eglGetError());
+                // MAS local: say which thread and call site hold the context.
+                const SiteName mine = describeSite(site);
+                const SiteName theirs = describeSite(mOwnerSite.load());
+                GFXSTREAM_ERROR(
+                    "MAS: thread %lu (site %s+0x%llx) could not make context %p current; "
+                    "thread %lu holds it (site %s+0x%llx)",
+                    self, mine.module, mine.offset, mContext, mOwnerThread.load(),
+                    theirs.module, theirs.offset);
                 // Still add the previous context to the stack, so that
                 // teardownContext() restores it, but report the failure:
                 // GL calls made now would not reach this context.
                 bound = false;
+            } else {
+                mOwnerThread.store(self);
+                mOwnerSite.store(site);
             }
         }
 
@@ -119,6 +156,12 @@ class DisplaySurfaceGlContextHelper : public ContextHelper {
             return;
         }
 
+        if (newContext.context != mContext &&
+            mOwnerThread.load() == gfxstream::base::getCurrentThreadId()) {
+            mOwnerThread.store(0);
+            mOwnerSite.store(nullptr);
+        }
+
         if (!s_egl.eglMakeCurrent(mDisplay,
                                   newContext.drawSurface,
                                   newContext.readSurface,
@@ -130,9 +173,43 @@ class DisplaySurfaceGlContextHelper : public ContextHelper {
     bool isBound() const override { return !sThreadState.previousContexts.empty(); }
 
   private:
+    // MAS local: a call site as module file name + offset. Returned by value, so two
+    // sites in one log line do not share a buffer. Without module lookup (non-Windows)
+    // the module is "?" and the offset is the absolute address.
+    struct SiteName {
+        char module[64] = "?";
+        unsigned long long offset = 0;
+    };
+
+    static SiteName describeSite(const void* site) {
+        SiteName out;
+        out.offset = reinterpret_cast<uintptr_t>(site);
+#ifdef _WIN32
+        HMODULE module = nullptr;
+        if (site && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                       static_cast<LPCSTR>(site), &module)) {
+            out.offset = reinterpret_cast<uintptr_t>(site) - reinterpret_cast<uintptr_t>(module);
+            char path[MAX_PATH];
+            DWORD n = GetModuleFileNameA(module, path, MAX_PATH);
+            if (n > 0 && n < MAX_PATH) {
+                const char* base = path;
+                for (DWORD i = 0; i < n; ++i) {
+                    if (path[i] == '\\' || path[i] == '/') base = path + i + 1;
+                }
+                snprintf(out.module, sizeof(out.module), "%s", base);
+            }
+        }
+#endif
+        return out;
+    }
+
     EGLDisplay mDisplay = EGL_NO_DISPLAY;
     EGLSurface mSurface = EGL_NO_SURFACE;
     EGLContext mContext = EGL_NO_CONTEXT;
+    // MAS local: last thread / call site that made mContext current through this helper.
+    std::atomic<unsigned long> mOwnerThread{0};
+    std::atomic<const void*> mOwnerSite{nullptr};
 };
 
 }  // namespace
