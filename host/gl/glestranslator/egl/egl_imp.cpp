@@ -1166,6 +1166,18 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay display,
                         newReadPtr->native(),
                         newDrawPtr->native(),
                         newCtx->nativeType())) {
+                // The previous context cannot be assumed to be current any
+                // more: wglMakeCurrent() makes the current context not
+                // current when it fails. Release it explicitly and record
+                // that this thread has no current context, so that EGL agrees
+                // with the native state and a later eglMakeCurrent() of the
+                // previous context really binds it again.
+                if (prevCtx.get()) {
+                    dpy->nativeType()->makeCurrent(NULL, NULL, NULL);
+                    thread->updateInfo(ContextPtr(), dpy, NULL, ShareGroupPtr(),
+                                       dpy->getManager(prevCtx->version()));
+                    prevCtx->setSurfaces(SurfacePtr(), SurfacePtr());
+                }
                 RETURN_ERROR(EGL_FALSE,EGL_BAD_ACCESS);
             }
             //TODO: handle the following errors

@@ -1153,15 +1153,23 @@ public:
             //           && GetLastError()==0) Sleep(16);
             //
 
+            // Only that error-less failure is retried. A failure with an error
+            // code, e.g. ERROR_BUSY because the context is current on another
+            // thread, must be reported: the caller would otherwise record the
+            // context as current while none is, and its GL calls would go
+            // nowhere. A failed release leaves no context current either, so
+            // it still counts as done.
             int count = 100;
-            while (!dispatch->wglMakeCurrent(hdcDraw, hdcContext)
-                   && --count > 0
-                   && !GetLastError()) {
+            while (!dispatch->wglMakeCurrent(hdcDraw, hdcContext)) {
+                const DWORD error = GetLastError();
+                if (!hdcContext) {
+                    break;
+                }
+                if (error != 0 || --count <= 0) {
+                    D("Error: wglMakeCurrent() failed, error %lu\n", error);
+                    return false;
+                }
                 Sleep(16);
-            }
-            if (count <= 0) {
-                D("Error: wglMakeCurrent() failed, error %d\n", (int)GetLastError());
-                return false;
             }
             ret = true;
         } else if (!dispatch->wglMakeContextCurrent) {

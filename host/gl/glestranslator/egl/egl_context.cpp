@@ -19,6 +19,7 @@
 #include "egl_os_api.h"
 #include "egl_pbuffer_surface.h"
 #include "thread_info.h"
+#include "gfxstream/common/logging.h"
 
 #include <common/gles_context.h>
 #include <memory>
@@ -129,9 +130,14 @@ EglContext::~EglContext()
                 m_config->nativeFormat(), &pbInfo);
         assert(pb);
         if (pb) {
-            const bool res = m_dpy->nativeType()->makeCurrent(pb, pb, m_native.get());
-            assert(res);
-            (void)res;
+            // This can fail for real, e.g. with ERROR_BUSY on Windows while
+            // the context is current on another thread. Do not assert: the
+            // GL objects are then not released through this context, but
+            // the native context itself is still destroyed.
+            if (!m_dpy->nativeType()->makeCurrent(pb, pb, m_native.get())) {
+                GFXSTREAM_ERROR("Failed to make EGL context %p current to destroy it",
+                                this);
+            }
             pbSurface->setNativePbuffer(pb);
         }
     }
