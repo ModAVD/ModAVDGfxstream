@@ -78,11 +78,18 @@ class YUVConverter {
                                YuvPlane plane,
                                GLuint* outTextureName);
 private:
-    void init(int w, int h, GfxstreamFormat format);
+    bool init(int w, int h, GfxstreamFormat format);
     void reset();
 
-    void createYUVGLShader();
+    bool createYUVGLShader();
     void createYUVGLFullscreenQuad();
+
+    // A failed init() is retried on the next update, i.e. up to once per
+    // frame. Log the first failure of a run and then only every
+    // kInitFailureLogInterval-th one.
+    static constexpr uint32_t kInitFailureLogInterval = 300;
+    uint32_t mInitFailures = 0;  // consecutive failed init() calls
+    bool shouldLogInitFailure() const;
 
     // For dealing with n-pixel-aligned buffers
     void updateCutoffs(float yWidth, float yStridePixels,
