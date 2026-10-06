@@ -1159,7 +1159,14 @@ public:
             // context as current while none is, and its GL calls would go
             // nowhere. A failed release leaves no context current either, so
             // it still counts as done.
+            //
+            // wglMakeCurrent() does not necessarily set the last error when it
+            // fails, so clear it before every attempt: 0 must mean that this
+            // call failed without an error code, not that an earlier call on
+            // this thread happened to leave 0 behind (or a stale error that
+            // would make an error-less failure look like a real one).
             int count = 100;
+            SetLastError(0);
             while (!dispatch->wglMakeCurrent(hdcDraw, hdcContext)) {
                 const DWORD error = GetLastError();
                 if (!hdcContext) {
@@ -1170,6 +1177,7 @@ public:
                     return false;
                 }
                 Sleep(16);
+                SetLastError(0);
             }
             ret = true;
         } else if (!dispatch->wglMakeContextCurrent) {
