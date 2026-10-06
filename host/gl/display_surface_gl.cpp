@@ -69,6 +69,7 @@ class DisplaySurfaceGlContextHelper : public ContextHelper {
                             currentDrawSurface != mSurface ||
                             currentReadSurface != mSurface);
 
+        bool bound = true;
         if (needsUpdate) {
             if (!previousContexts.empty()) {
                 GFXSTREAM_ERROR(
@@ -83,7 +84,10 @@ class DisplaySurfaceGlContextHelper : public ContextHelper {
                 // Legacy swiftshader logspam on exit with this line.
                 GFXSTREAM_DEBUG("Failed to make display surface context current: %d",
                                 s_egl.eglGetError());
-                // Fall through to allow adding previous context to stack.
+                // Still add the previous context to the stack, so that
+                // teardownContext() restores it, but report the failure:
+                // GL calls made now would not reach this context.
+                bound = false;
             }
         }
 
@@ -91,7 +95,7 @@ class DisplaySurfaceGlContextHelper : public ContextHelper {
             {.context = currentContext,
              .readSurface = currentReadSurface,
              .drawSurface = currentDrawSurface});
-        return true;
+        return bound;
     }
 
     void teardownContext() override {

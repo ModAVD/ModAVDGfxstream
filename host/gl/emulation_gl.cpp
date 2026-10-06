@@ -15,6 +15,7 @@
 #include "emulation_gl.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <optional>
 #include <vector>
@@ -1592,6 +1593,13 @@ void EmulationGl::destroyYUVTextures(uint32_t type, uint32_t count, uint32_t* te
     auto format = *formatOpt;
 
     RecursiveScopedContextBind bind(getPbufferSurfaceContextHelper());
+    if (!bind.isOk()) {
+        // The names would be deleted in whatever context the thread has
+        // current instead. Leak the textures rather than risk that.
+        GFXSTREAM_ERROR("%s: could not bind the pbuffer context, not deleting %u texture sets",
+                        __func__, count);
+        return;
+    }
     if (format == GfxstreamFormat::NV12 || format == GfxstreamFormat::NV21) {
         s_gles2.glDeleteTextures(2 * count, textures);
     } else if (format == GfxstreamFormat::YV12 || format == GfxstreamFormat::YV21) {
@@ -1608,6 +1616,27 @@ void EmulationGl::updateYUVTextures(uint32_t type, uint32_t* textures, void* pri
     auto format = *formatOpt;
 
     RecursiveScopedContextBind bind(getPbufferSurfaceContextHelper());
+    // Without the context, glGetGlobalTexName() does not return the
+    // textures' global names (it returns 0 when no context is current), and
+    // a CUDA updater then fails to register the textures. Drop this update;
+    // the next frame tries again. As that can happen on every frame, log
+    // the first failure of a run and then every kLogInterval-th one.
+    constexpr uint32_t kLogInterval = 300;
+    static std::atomic<uint32_t> sBindFailures{0};
+    if (!bind.isOk()) {
+        const uint32_t failures = sBindFailures.fetch_add(1) + 1;
+        if (failures == 1 || failures % kLogInterval == 0) {
+            GFXSTREAM_ERROR(
+                "%s: could not bind the pbuffer context, dropping the update "
+                "(failure %u in a row, logged every %u)",
+                __func__, failures, kLogInterval);
+        }
+        return;
+    }
+    if (const uint32_t failures = sBindFailures.exchange(0); failures > 1) {
+        GFXSTREAM_INFO("%s: bound the pbuffer context again after %u dropped updates", __func__,
+                       failures);
+    }
 
     yuv_updater_t updater = (yuv_updater_t)func;
     uint32_t gtextures[3] = {0, 0, 0};

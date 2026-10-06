@@ -25,6 +25,10 @@ class ContextHelper {
   public:
     ContextHelper() = default;
     virtual ~ContextHelper() = default;
+    // Saves the calling thread's current context and makes the helper's
+    // context current. Returns false if the context could not be made
+    // current; GL calls must then not be made. teardownContext() restores
+    // the saved context and is also needed after a failed setupContext().
     virtual bool setupContext() = 0;
     virtual void teardownContext() = 0;
     virtual bool isBound() const = 0;
@@ -44,7 +48,10 @@ class ContextHelper {
 class RecursiveScopedContextBind {
   public:
     RecursiveScopedContextBind(ContextHelper* helper) : mHelper(helper) {
-        mIsBound = helper ? helper->setupContext() : false;
+        if (helper) {
+            mIsBound = helper->setupContext();
+            mNeedsTeardown = true;
+        }
     }
 
     bool isOk() const { return mIsBound; }
@@ -52,15 +59,19 @@ class RecursiveScopedContextBind {
     ~RecursiveScopedContextBind() { release(); }
 
     void release() {
-        if (mIsBound) {
+        if (mNeedsTeardown) {
             mHelper->teardownContext();
-            mIsBound = false;
+            mNeedsTeardown = false;
         }
+        mIsBound = false;
     }
 
   private:
     ContextHelper* mHelper;
     bool mIsBound = false;
+    // Also set when setupContext() failed: teardownContext() then restores
+    // the context the thread had before.
+    bool mNeedsTeardown = false;
 };
 
 }  // namespace gl
