@@ -46,8 +46,7 @@ class ComputePipelineRestorationTest : public ::testing::Test {
         vkTest = std::make_unique<VulkanTestHelper>();
         vkTest->failOnValidationErrors(false);
         vkTest->initialize(
-            {.astcLdrEmulationMode = AstcEmulationMode::Gpu,
-             .appInfo = VkApplicationInfo{.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+            {.appInfo = VkApplicationInfo{.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
                                           .pApplicationName = "pipeline_restoration_test",
                                           .pEngineName = "pipeline_restoration_test",
                                           .apiVersion = VK_API_VERSION_1_1},

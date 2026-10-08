@@ -111,6 +111,10 @@ ParseGfxstreamFeatures(const int rendererFlags,
     GFXSTREAM_SET_BOOL_FEATURE_ON_CONDITION(
         &features, VulkanBatchedDescriptorSetUpdate, true);
     GFXSTREAM_SET_BOOL_FEATURE_ON_CONDITION(
+        &features, VulkanAstcEmulation, true);
+    GFXSTREAM_SET_BOOL_FEATURE_ON_CONDITION(
+        &features, VulkanEtc2Emulation, true);
+    GFXSTREAM_SET_BOOL_FEATURE_ON_CONDITION(
         &features, VulkanIgnoredHandles, true);
     GFXSTREAM_SET_BOOL_FEATURE_ON_CONDITION(
         &features, VulkanNativeSwapchain,

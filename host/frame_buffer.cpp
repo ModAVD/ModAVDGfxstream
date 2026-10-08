@@ -1345,8 +1345,6 @@ std::unique_ptr<FrameBuffer::Impl> FrameBuffer::Impl::Create(FrameBuffer* frameb
         .useVulkanComposition = impl->m_useVulkanComposition,
         .useVulkanNativeSwapchain = impl->m_features.VulkanNativeSwapchain.enabled(),
         .guestRenderDoc = std::move(renderDocMultipleVkInstances),
-        .astcLdrEmulationMode = AstcEmulationMode::Gpu,
-        .enableEtc2Emulation = true,
         .enableYcbcrEmulation = false,
         .guestVulkanOnly = impl->m_features.GuestVulkanOnly.enabled(),
         .useDedicatedAllocations = false,  // Set later.

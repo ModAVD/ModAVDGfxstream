@@ -51,6 +51,19 @@ EmulatedPhysicalDeviceQueueProperties::EmulatedPhysicalDeviceQueueProperties(
             }
         }
     }
+
+    // Gfxstream supports ASTC and ETC2 emulation by inspecting `vkCmdPipelineBarrier()`
+    // calls and inserting extra commands into the provided command buffers to dispatch
+    // compute shaders. Gfxstream, however, does not control which queues these command
+    // buffers are submitted to so we must hide transfer-only queues to ensure compute
+    // shader work is not scheduled on transfer-only queues.
+    if (features.VulkanAstcEmulation.enabled() || features.VulkanEtc2Emulation.enabled()) {
+        for (VkQueueFamilyProperties& qfp : mQueueFamilyProperties) {
+            if (!(qfp.queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))) {
+                qfp.queueFlags &= ~VK_QUEUE_TRANSFER_BIT;
+            }
+        }
+    }
 }
 
 }  // namespace vk

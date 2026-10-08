@@ -41,6 +41,7 @@ gfxstream::host::FeatureSet getGfxstreamFeatures() {
     gfxstream::host::FeatureSet features;
     // Enable so that we can have VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
     features.GlDirectMem.setEnabled(true);
+    features.VulkanAstcEmulation.setEnabled(true);
     return features;
 }
 
@@ -92,9 +93,7 @@ VulkanTestHelper::~VulkanTestHelper() {
 }
 
 void VulkanTestHelper::initialize(const InitializationOptions& options) {
-    mVkEmu->initFeatures(VkEmulation::Features{
-        .astcLdrEmulationMode = options.astcLdrEmulationMode,
-    });
+    mVkEmu->initFeatures(VkEmulation::Features{});
 
     // Check that the validation layer is present
     const char* validationLayer = "VK_LAYER_KHRONOS_validation";

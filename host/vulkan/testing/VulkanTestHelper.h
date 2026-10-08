@@ -48,7 +48,6 @@ class VulkanTestHelper {
 
     // Optional parameters for the `initialize()` function
     struct InitializationOptions {
-        AstcEmulationMode astcLdrEmulationMode;
         std::optional<VkApplicationInfo> appInfo;
         VkPhysicalDeviceFeatures deviceFeatures;
         std::vector<std::string> enabledExtensions;  // enabled extensions for vkCreateInstance

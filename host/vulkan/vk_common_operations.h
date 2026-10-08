@@ -107,8 +107,6 @@ class VkEmulation {
         bool useVulkanComposition = false;
         bool useVulkanNativeSwapchain = false;
         std::unique_ptr<gfxstream::host::RenderDocWithMultipleVkInstances> guestRenderDoc = nullptr;
-        AstcEmulationMode astcLdrEmulationMode = AstcEmulationMode::Disabled;
-        bool enableEtc2Emulation = false;
         bool enableYcbcrEmulation = false;
         bool guestVulkanOnly = false;
         bool useDedicatedAllocations = false;

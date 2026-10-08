@@ -152,6 +152,101 @@ TEST(VkGuestQueueUtilsTest, VulkanProtectedVirtualQueue) {
     EXPECT_THAT(actualQueueProperties[0], EqsVkQueueFamilyProperties(expectedQueueFamilyProperties[0]));
 }
 
+// Gfxstream supports ETC2 emulation by inspecting `vkCmdPipelineBarrier()` calls
+// and inserting extra commands into the provided command buffers to dispatch
+// compute shaders. Gfxstream, however, does not control which queues these command
+// buffers are submitted to so we must hide transfer-only queues to ensure compute
+// shader work is not scheduled on transfer-only queues.
+TEST(VkGuestQueueUtilsTest, VulkanEtc2EmulationHidesTransferOnlyQueue) {
+    const std::vector<VkQueueFamilyProperties> hostQueueFamilyProperties = {
+        {.queueFlags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
+         .queueCount = 16,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}},
+        {.queueFlags = VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT,
+         .queueCount = 2,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}},
+        {.queueFlags = VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
+         .queueCount = 8,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}}};
+
+    const std::vector<VkQueueFamilyProperties> expectedQueueFamilyProperties = {
+        {.queueFlags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
+         .queueCount = 16,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}},
+        // NOTE: VK_QUEUE_TRANSFER_BIT is removed here:
+        {.queueFlags = VK_QUEUE_SPARSE_BINDING_BIT,
+         .queueCount = 2,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}},
+        {.queueFlags = VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
+         .queueCount = 8,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}}};
+
+    gfxstream::host::FeatureSet features;
+    features.Vulkan.setEnabled(true);
+    features.VulkanEtc2Emulation.setEnabled(true);
+
+    EmulatedPhysicalDeviceQueueProperties helper(hostQueueFamilyProperties, features);
+
+    const auto actualQueueProperties = helper.getQueueFamilyProperties();
+    EXPECT_THAT(actualQueueProperties.size(), 3);
+    EXPECT_THAT(actualQueueProperties[0], EqsVkQueueFamilyProperties(expectedQueueFamilyProperties[0]));
+    EXPECT_THAT(actualQueueProperties[1], EqsVkQueueFamilyProperties(expectedQueueFamilyProperties[1]));
+    EXPECT_THAT(actualQueueProperties[2], EqsVkQueueFamilyProperties(expectedQueueFamilyProperties[2]));
+}
+
+// Gfxstream supports ASTC emulation by inspecting `vkCmdPipelineBarrier()` calls
+// and inserting extra commands into the provided command buffers to dispatch
+// compute shaders. Gfxstream, however, does not control which queues these command
+// buffers are submitted to so we must hide transfer-only queues to ensure compute
+// shader work is not scheduled on transfer-only queues.
+TEST(VkGuestQueueUtilsTest, VulkanAstcEmulationHidesTransferOnlyQueue) {
+    const std::vector<VkQueueFamilyProperties> hostQueueFamilyProperties = {
+        {.queueFlags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
+         .queueCount = 16,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}},
+        {.queueFlags = VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT,
+         .queueCount = 2,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}},
+        {.queueFlags = VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
+         .queueCount = 8,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}}};
+
+    const std::vector<VkQueueFamilyProperties> expectedQueueFamilyProperties = {
+        {.queueFlags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
+         .queueCount = 16,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}},
+        // NOTE: VK_QUEUE_TRANSFER_BIT is removed here:
+        {.queueFlags = VK_QUEUE_SPARSE_BINDING_BIT,
+         .queueCount = 2,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}},
+        {.queueFlags = VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
+         .queueCount = 8,
+         .timestampValidBits = 64,
+         .minImageTransferGranularity = {1, 1, 1}}};
+
+    gfxstream::host::FeatureSet features;
+    features.Vulkan.setEnabled(true);
+    features.VulkanAstcEmulation.setEnabled(true);
+
+    EmulatedPhysicalDeviceQueueProperties helper(hostQueueFamilyProperties, features);
+
+    const auto actualQueueProperties = helper.getQueueFamilyProperties();
+    EXPECT_THAT(actualQueueProperties.size(), 3);
+    EXPECT_THAT(actualQueueProperties[0], EqsVkQueueFamilyProperties(expectedQueueFamilyProperties[0]));
+    EXPECT_THAT(actualQueueProperties[1], EqsVkQueueFamilyProperties(expectedQueueFamilyProperties[1]));
+    EXPECT_THAT(actualQueueProperties[2], EqsVkQueueFamilyProperties(expectedQueueFamilyProperties[2]));
+}
 
 }  // namespace
 }  // namespace vk

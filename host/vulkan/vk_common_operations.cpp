@@ -1731,10 +1731,12 @@ void VkEmulation::initFeatures(Features features) {
         GFXSTREAM_INFO("    useVulkanNativeSwapchain: %s",
                        features.useVulkanNativeSwapchain ? "true" : "false");
         GFXSTREAM_INFO("    enable guestRenderDoc: %s", features.guestRenderDoc ? "true" : "false");
+        // MAS: these two now come from the VulkanAstcEmulation and VulkanEtc2Emulation features,
+        // applied in setFeatures(), which runs first. Keep logging them: when the emulator does
+        // not set those features, the emulation is silently off (ModAVD#39).
         GFXSTREAM_INFO("    ASTC LDR emulation mode: %s",
-                       string_AstcEmulationMode(features.astcLdrEmulationMode));
-        GFXSTREAM_INFO("    enable ETC2 emulation: %s",
-                       features.enableEtc2Emulation ? "true" : "false");
+                       string_AstcEmulationMode(mAstcLdrEmulationMode));
+        GFXSTREAM_INFO("    enable ETC2 emulation: %s", mEnableEtc2Emulation ? "true" : "false");
         GFXSTREAM_INFO("    enable Ycbcr emulation: %s",
                        features.enableYcbcrEmulation ? "true" : "false");
         GFXSTREAM_INFO("    guestVulkanOnly: %s", features.guestVulkanOnly ? "true" : "false");
@@ -1752,7 +1754,6 @@ void VkEmulation::initFeatures(Features features) {
     mUseDeferredCommands = features.deferredCommands;
     mUseCreateResourcesWithRequirements = features.createResourceWithRequirements;
     mGuestRenderDoc = std::move(features.guestRenderDoc);
-    mAstcLdrEmulationMode = features.astcLdrEmulationMode;
     // MAS (Endfield, 10-16), off by default: ANDROID_EMU_VK_ASTC_BC3=1 makes the GPU ASTC
     // emulation transcode into BC3 instead of RGBA8, a quarter of the decompressed texture memory
     // (the emulated image keeps the raw ASTC blocks next to it either way).
@@ -1760,7 +1761,6 @@ void VkEmulation::initFeatures(Features features) {
         GpuDecompressionPipelineManager::setAstcDecoder(AstcDecoder::NewBc3);
         GFXSTREAM_INFO("MAS: GPU ASTC emulation decodes to BC3 (ANDROID_EMU_VK_ASTC_BC3)");
     }
-    mEnableEtc2Emulation = features.enableEtc2Emulation;
     mEnableYcbcrEmulation = features.enableYcbcrEmulation;
     mGuestVulkanOnly = features.guestVulkanOnly;
     mUseDedicatedAllocations = features.useDedicatedAllocations;
@@ -1936,6 +1936,10 @@ const gfxstream::host::FeatureSet& VkEmulation::getFeatures() const { return mFe
 
 void VkEmulation::setFeatures(const gfxstream::host::FeatureSet& features) {
     mFeatures = features;
+    mAstcLdrEmulationMode = mFeatures.VulkanAstcEmulation.enabled()
+                                ? AstcEmulationMode::Gpu
+                                : AstcEmulationMode::Disabled;
+    mEnableEtc2Emulation = mFeatures.VulkanEtc2Emulation.enabled();
 
     // Some features may require changes based on other features, system and drivers
 

@@ -458,6 +458,16 @@ struct FeatureSet {
         "If enabled, enables protected memory emulation for the guest.",
         &map,
     };
+    BoolFeatureInfo VulkanAstcEmulation = {
+        "VulkanAstcEmulation",
+        "If enabled, enables ASTC texture compression emulation for the guest.",
+        &map,
+    };
+    BoolFeatureInfo VulkanEtc2Emulation = {
+        "VulkanEtc2Emulation",
+        "If enabled, enables ETC2 texture compression emulation for the guest.",
+        &map,
+    };
     VulkanVersionFeatureInfo GuestVulkanMaxApiVersion = {
         "GuestVulkanMaxApiVersion",
         "Represents the maximum vulkan api version that should be reported to the guest and is"
