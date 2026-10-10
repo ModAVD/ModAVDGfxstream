@@ -10951,6 +10951,36 @@ class VkDecoderGlobalState::Impl {
         pFormatProp->formatProperties.bufferFeatures &= kEmulatedTextureBufferFeatureMask;
     }
 
+    static const VkFormatFeatureFlags kUnsupportedFormatFeatureFlags =
+        VK_FORMAT_FEATURE_VIDEO_DECODE_OUTPUT_BIT_KHR |
+        VK_FORMAT_FEATURE_VIDEO_DECODE_DPB_BIT_KHR |
+        VK_FORMAT_FEATURE_VIDEO_ENCODE_INPUT_BIT_KHR |
+        VK_FORMAT_FEATURE_VIDEO_ENCODE_DPB_BIT_KHR;
+
+    static const VkFormatFeatureFlags2 kUnsupportedFormatFeatureFlags2 =
+        VK_FORMAT_FEATURE_2_VIDEO_DECODE_OUTPUT_BIT_KHR |
+        VK_FORMAT_FEATURE_2_VIDEO_DECODE_DPB_BIT_KHR |
+        VK_FORMAT_FEATURE_2_VIDEO_ENCODE_INPUT_BIT_KHR |
+        VK_FORMAT_FEATURE_2_VIDEO_ENCODE_DPB_BIT_KHR |
+        VK_FORMAT_FEATURE_2_VIDEO_ENCODE_QUANTIZATION_DELTA_MAP_BIT_KHR |
+        VK_FORMAT_FEATURE_2_VIDEO_ENCODE_EMPHASIS_MAP_BIT_KHR;
+
+    void maskFormatPropertiesForUnsupportedExtensions(VkFormatProperties* pFormatProp) {
+        pFormatProp->linearTilingFeatures &= ~kUnsupportedFormatFeatureFlags;
+        pFormatProp->optimalTilingFeatures &= ~kUnsupportedFormatFeatureFlags;
+        pFormatProp->bufferFeatures &= ~kUnsupportedFormatFeatureFlags;
+    }
+
+    void maskFormatPropertiesForUnsupportedExtensions(VkFormatProperties2* pFormatProp) {
+        maskFormatPropertiesForUnsupportedExtensions(&pFormatProp->formatProperties);
+        VkFormatProperties3* formatProps3 = vk_find_struct<VkFormatProperties3>(pFormatProp);
+        if (formatProps3) {
+            formatProps3->linearTilingFeatures &= ~kUnsupportedFormatFeatureFlags2;
+            formatProps3->optimalTilingFeatures &= ~kUnsupportedFormatFeatureFlags2;
+            formatProps3->bufferFeatures &= ~kUnsupportedFormatFeatureFlags2;
+        }
+    }
+
     void maskImageFormatPropertiesForEmulatedTextures(VkImageFormatProperties* pProperties) {
         // dEQP-VK.api.info.image_format_properties.2d.optimal#etc2_r8g8b8_unorm_block
         pProperties->sampleCounts &= VK_SAMPLE_COUNT_1_BIT;
@@ -10967,9 +10997,11 @@ class VkDecoderGlobalState::Impl {
                 physicalDevice, CompressedImageInfo::getOutputFormat(format),
                 pFormatProperties);
             maskFormatPropertiesForEmulatedTextures(pFormatProperties);
+            maskFormatPropertiesForUnsupportedExtensions(pFormatProperties);
             return;
         }
         getPhysicalDeviceFormatPropertiesFunc(physicalDevice, format, pFormatProperties);
+        maskFormatPropertiesForUnsupportedExtensions(pFormatProperties);
     }
 
     template <typename VkHandleToInfoMap,
