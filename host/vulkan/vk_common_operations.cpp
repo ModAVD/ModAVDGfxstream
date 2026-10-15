@@ -37,6 +37,7 @@
 #include "gfxstream/synchronization/Lock.h"
 #include "gfxstream/system/System.h"
 #include "render-utils/Renderer.h"
+#include "emulated_textures/gpu_decompression_pipeline.h"
 #include "vk_decoder_global_state.h"
 #include "vk_emulated_physical_device_memory.h"
 #include "vk_format_utils.h"
@@ -1719,6 +1720,13 @@ void VkEmulation::initFeatures(Features features) {
     mUseCreateResourcesWithRequirements = features.createResourceWithRequirements;
     mGuestRenderDoc = std::move(features.guestRenderDoc);
     mAstcLdrEmulationMode = features.astcLdrEmulationMode;
+    // MAS (Endfield, 10-16), off by default: ANDROID_EMU_VK_ASTC_BC3=1 makes the GPU ASTC
+    // emulation transcode into BC3 instead of RGBA8, a quarter of the decompressed texture memory
+    // (the emulated image keeps the raw ASTC blocks next to it either way).
+    if (gfxstream::base::getEnvironmentVariable("ANDROID_EMU_VK_ASTC_BC3") == "1") {
+        GpuDecompressionPipelineManager::setAstcDecoder(AstcDecoder::NewBc3);
+        GFXSTREAM_INFO("MAS: GPU ASTC emulation decodes to BC3 (ANDROID_EMU_VK_ASTC_BC3)");
+    }
     mEnableEtc2Emulation = features.enableEtc2Emulation;
     mEnableYcbcrEmulation = features.enableYcbcrEmulation;
     mGuestVulkanOnly = features.guestVulkanOnly;
