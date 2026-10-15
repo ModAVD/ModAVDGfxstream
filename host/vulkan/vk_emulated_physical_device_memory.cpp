@@ -18,6 +18,7 @@
 #include <limits>
 
 #include "gfxstream/common/logging.h"
+#include "gfxstream/system/System.h"
 
 namespace gfxstream {
 namespace host {
@@ -58,6 +59,35 @@ EmulatedPhysicalDeviceMemoryProperties::EmulatedPhysicalDeviceMemoryProperties(
         mGuestMemoryProperties.memoryTypes[i].propertyFlags &=
             ~(VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD |
               VK_MEMORY_PROPERTY_DEVICE_UNCACHED_BIT_AMD);
+    }
+
+    // MAS (Endfield, 10-15), off by default, ANDROID_EMU_VK_HIDE_REBAR=1 turns it on: offer the
+    // guest the host's device-local + host-visible types (NVIDIA ReBAR / BAR VRAM) as device-local
+    // only. A game that maps such memory writes its per-frame uploads straight into VRAM through
+    // the address space mapping, i.e. write-combined over PCIe and then through WHPX; Endfield's
+    // render thread spent most of its time in that copy loop. Without the host-visible bit the
+    // guest picks a plain host-visible type for those buffers, which ANDROID_EMU_VK_WC_AS_CACHED
+    // backs with cached system memory. The type index and heap stay the same, so images and
+    // buffers that need device-local memory still get the same host type (memoryTypeBits are
+    // unchanged); only CPU mapping of VRAM goes away. GPU reads of the moved buffers cross PCIe
+    // instead of hitting VRAM.
+    if (gfxstream::base::getEnvironmentVariable("ANDROID_EMU_VK_HIDE_REBAR") == "1") {
+        constexpr VkMemoryPropertyFlags kRebar =
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+        constexpr VkMemoryPropertyFlags kHostAccess = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                                      VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+        for (uint32_t i = 0; i < mGuestMemoryProperties.memoryTypeCount; i++) {
+            const VkMemoryPropertyFlags hostFlags =
+                mHostMemoryProperties.memoryTypes[i].propertyFlags;
+            if ((hostFlags & kRebar) == kRebar) {
+                mGuestMemoryProperties.memoryTypes[i].propertyFlags &= ~kHostAccess;
+                GFXSTREAM_INFO(
+                    "MAS: memory type %u (host flags 0x%x, heap %u) offered to the guest as "
+                    "device-local only (ANDROID_EMU_VK_HIDE_REBAR)",
+                    i, hostFlags, mHostMemoryProperties.memoryTypes[i].heapIndex);
+            }
+        }
     }
 
     // If enabled, hide non device memory types from the guest.
