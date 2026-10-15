@@ -3429,6 +3429,25 @@ class VkDecoderGlobalState::Impl {
         VALIDATE_REQUIRED_HANDLE(memory);
         VkResult result = vk->vkBindImageMemory(device, image, memory, memoryOffset);
         if (result != VK_SUCCESS) {
+            // MAS local diagnostic (Endfield asserts on a failed vkBindImageMemory, 10-16).
+            std::lock_guard<std::mutex> lock(mMutex);
+            const auto* imageInfo = gfxstream::base::find(mImageInfo, image);
+            const auto* memoryInfo = gfxstream::base::find(mMemoryInfo, memory);
+            VkMemoryRequirements req = {};
+            vk->vkGetImageMemoryRequirements(device, image, &req);
+            const VkImageCreateInfo* ci = imageInfo ? &imageInfo->imageCreateInfoShallow : nullptr;
+            GFXSTREAM_ERROR(
+                "MAS: vkBindImageMemory failed %d: image fmt %d %ux%ux%u mips %u layers %u tiling %d "
+                "usage 0x%x flags 0x%x compressed %d; driver req size %llu align %llu bits 0x%x; "
+                "memory size %llu host type %u offset %llu",
+                result, ci ? (int)ci->format : -1, ci ? ci->extent.width : 0,
+                ci ? ci->extent.height : 0, ci ? ci->extent.depth : 0, ci ? ci->mipLevels : 0,
+                ci ? ci->arrayLayers : 0, ci ? (int)ci->tiling : -1, ci ? ci->usage : 0,
+                ci ? ci->flags : 0, (imageInfo && imageInfo->compressInfo) ? 1 : 0,
+                (unsigned long long)req.size, (unsigned long long)req.alignment,
+                req.memoryTypeBits, memoryInfo ? (unsigned long long)memoryInfo->size : 0ULL,
+                memoryInfo ? memoryInfo->memoryIndex : 0xffffffffu,
+                (unsigned long long)memoryOffset);
             return result;
         }
 
@@ -3453,7 +3472,22 @@ class VkDecoderGlobalState::Impl {
             return VK_SUCCESS;
         }
 
-        return imageInfo->compressInfo->bindCompressedMipmapsMemory(vk, memory, memoryOffset);
+        VkResult mipRes =
+            imageInfo->compressInfo->bindCompressedMipmapsMemory(vk, memory, memoryOffset);
+        if (mipRes != VK_SUCCESS) {
+            // MAS local diagnostic (Endfield, 10-16)
+            const VkMemoryRequirements cr = imageInfo->compressInfo->getMemoryRequirements();
+            const VkImageCreateInfo& ci = imageInfo->imageCreateInfoShallow;
+            GFXSTREAM_ERROR(
+                "MAS: binding the emulated compressed mipmaps failed %d: image fmt %d %ux%u mips %u "
+                "layers %u; emulated req size %llu align %llu; memory size %llu host type %u "
+                "offset %llu",
+                mipRes, (int)ci.format, ci.extent.width, ci.extent.height, ci.mipLevels,
+                ci.arrayLayers, (unsigned long long)cr.size, (unsigned long long)cr.alignment,
+                (unsigned long long)memoryInfo->size, memoryInfo->memoryIndex,
+                (unsigned long long)memoryOffset);
+        }
+        return mipRes;
     }
 
     VkResult on_vkBindImageMemory(gfxstream::base::BumpPool* pool,
