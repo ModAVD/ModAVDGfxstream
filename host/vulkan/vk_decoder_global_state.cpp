@@ -41,6 +41,7 @@
 #include "common/goldfish_vk_deepcopy.h"
 #include "common/goldfish_vk_dispatch.h"
 #include "common/goldfish_vk_marshaling.h"
+#include "common/goldfish_vk_query_only_structs.h"
 #include "common/goldfish_vk_reserved_marshaling.h"
 #include "emulated_textures/astc_texture.h"
 #include "emulated_textures/compressed_image_info.h"
@@ -174,6 +175,73 @@ static constexpr uint64_t kPageSizeforBlob = 4096;
 static constexpr uint64_t kPageMaskForBlob = ~(0xfff);
 
 static std::atomic<uint64_t> sUniqueShmemId = 0;
+
+// Feature and property structs of extensions that gfxstream does not support (listed in
+// common/goldfish_vk_query_only_structs.h) are only decoded to keep the stream in sync. Guests
+// cannot enable those extensions, so the structs must not reach the host driver: it would
+// report, for example, ray tracing as supported, or receive structs for extensions that were
+// never enabled.
+
+// Unlinks those structs from |chainRoot|'s pNext chain for good. Returns how many were removed.
+static uint32_t removeQueryOnlyStructs(const char* caller, void* chainRoot) {
+    uint32_t removed = 0;
+    VkBaseOutStructure* prev = static_cast<VkBaseOutStructure*>(chainRoot);
+    while (prev && prev->pNext) {
+        VkBaseOutStructure* curr = prev->pNext;
+        if (goldfish_vk_query_only_struct_info(curr->sType)) {
+            GFXSTREAM_INFO("%s: not passing %s to the host driver: extension not supported", caller,
+                           string_VkStructureType(curr->sType));
+            prev->pNext = curr->pNext;
+            ++removed;
+        } else {
+            prev = curr;
+        }
+    }
+    return removed;
+}
+
+// Hides those structs from the driver for the lifetime of the object, then puts the original
+// chain back with the hidden structs zeroed, which is what a device without the extensions
+// reports, so the reply to the guest still carries every struct it sent, in order.
+class ScopedHideQueryOnlyStructs {
+   public:
+    ScopedHideQueryOnlyStructs(const char* caller, void* chainRoot)
+        : mRoot(static_cast<VkBaseOutStructure*>(chainRoot)) {
+        bool anyHidden = false;
+        for (VkBaseOutStructure* s = mRoot ? mRoot->pNext : nullptr; s; s = s->pNext) {
+            mChain.push_back(s);
+            anyHidden = anyHidden || goldfish_vk_query_only_struct_info(s->sType) != nullptr;
+        }
+        if (!anyHidden) {
+            mChain.clear();
+            return;
+        }
+        removeQueryOnlyStructs(caller, mRoot);
+    }
+
+    ~ScopedHideQueryOnlyStructs() {
+        if (mChain.empty()) {
+            return;
+        }
+        VkBaseOutStructure* prev = mRoot;
+        for (VkBaseOutStructure* s : mChain) {
+            if (const QueryOnlyStructInfo* info = goldfish_vk_query_only_struct_info(s->sType)) {
+                memset(reinterpret_cast<uint8_t*>(s) + sizeof(VkBaseOutStructure), 0,
+                       info->structSize - sizeof(VkBaseOutStructure));
+            }
+            prev->pNext = s;
+            prev = s;
+        }
+        prev->pNext = nullptr;
+    }
+
+    ScopedHideQueryOnlyStructs(const ScopedHideQueryOnlyStructs&) = delete;
+    ScopedHideQueryOnlyStructs& operator=(const ScopedHideQueryOnlyStructs&) = delete;
+
+   private:
+    VkBaseOutStructure* mRoot;
+    std::vector<VkBaseOutStructure*> mChain;
+};
 
 class VkDecoderGlobalState::Impl {
    public:
@@ -1594,6 +1662,8 @@ class VkDecoderGlobalState::Impl {
         auto* instanceInfo = gfxstream::base::find(mInstanceInfo, physdevInfo->instance);
         if (!instanceInfo) return;
 
+        ScopedHideQueryOnlyStructs hideQueryOnlyStructs(__func__, pFeatures);
+
         if (instanceInfo->apiVersion >= VK_MAKE_VERSION(1, 1, 0) &&
             physdevInfo->props.apiVersion >= VK_MAKE_VERSION(1, 1, 0)) {
             vk->vkGetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
@@ -1926,6 +1996,8 @@ class VkDecoderGlobalState::Impl {
         auto* instanceInfo = gfxstream::base::find(mInstanceInfo, physdevInfo->instance);
         if (!instanceInfo) return;
 
+        ScopedHideQueryOnlyStructs hideQueryOnlyStructs(__func__, pProperties);
+
         if (instanceInfo->apiVersion >= VK_MAKE_VERSION(1, 1, 0) &&
             physdevInfo->props.apiVersion >= VK_MAKE_VERSION(1, 1, 0)) {
             vk->vkGetPhysicalDeviceProperties2(physicalDevice, pProperties);
@@ -2205,6 +2277,7 @@ class VkDecoderGlobalState::Impl {
         VkDeviceCreateInfo createInfoFiltered;
         deepcopy_VkDeviceCreateInfo(pool, VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, pCreateInfo,
                                       &createInfoFiltered);
+        removeQueryOnlyStructs(__func__, &createInfoFiltered);
 
         // According to the spec, it seems that the application can use compressed texture formats
         // without enabling the feature when creating the VkDevice, as long as

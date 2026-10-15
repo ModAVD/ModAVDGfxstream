@@ -30,6 +30,7 @@
 
 #include "goldfish_vk_transform.h"
 
+#include "goldfish_vk_query_only_structs.h"
 #include "vk_decoder_global_state.h"
 
 namespace gfxstream {
@@ -11147,6 +11148,11 @@ void transform_tohost_extension_struct(VkDecoderGlobalState* resourceTracker,
         }
 #endif
         default: {
+            if (goldfish_vk_query_only_struct_info(structType)) {
+                // Plain data, nothing to transform; keep walking the chain.
+                transform_tohost_extension_struct(
+                    resourceTracker, static_cast<VkBaseOutStructure*>(structExtension_out)->pNext);
+            }
             return;
         }
     }
@@ -12654,6 +12660,11 @@ void transform_fromhost_extension_struct(VkDecoderGlobalState* resourceTracker,
         }
 #endif
         default: {
+            if (goldfish_vk_query_only_struct_info(structType)) {
+                // Plain data, nothing to transform; keep walking the chain.
+                transform_fromhost_extension_struct(
+                    resourceTracker, static_cast<VkBaseOutStructure*>(structExtension_out)->pNext);
+            }
             return;
         }
     }

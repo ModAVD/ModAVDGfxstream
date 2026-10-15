@@ -34,6 +34,7 @@
 
 #include "goldfish_vk_extension_structs.h"
 #include "goldfish_vk_private_defs.h"
+#include "goldfish_vk_query_only_structs.h"
 #include "vulkan_boxed_handles.h"
 
 namespace gfxstream {
@@ -16512,6 +16513,52 @@ void reservedunmarshal_VkPhysicalDeviceImageCompressionControlSwapchainFeaturesE
 }
 
 #endif
+// Decodes a struct listed in goldfish_vk_query_only_structs.h. Mirrors the generated
+// reservedunmarshal_Vk* functions: sType, the pNext chain, then the fields in wire order.
+static void reservedunmarshal_query_only_struct(VulkanStream* vkStream, VkStructureType rootType,
+                                                const QueryOnlyStructInfo* info,
+                                                void* structExtension_out, uint8_t** ptr) {
+    VkBaseOutStructure* forUnmarshaling =
+        reinterpret_cast<VkBaseOutStructure*>(structExtension_out);
+    memcpy((VkStructureType*)&forUnmarshaling->sType, *ptr, sizeof(VkStructureType));
+    *ptr += sizeof(VkStructureType);
+    if (rootType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+        rootType = forUnmarshaling->sType;
+    }
+    uint32_t pNext_size;
+    memcpy((uint32_t*)&pNext_size, *ptr, sizeof(uint32_t));
+    gfxstream::Stream::fromBe32((uint8_t*)&pNext_size);
+    *ptr += sizeof(uint32_t);
+    forUnmarshaling->pNext = nullptr;
+    if (pNext_size) {
+        vkStream->alloc((void**)&forUnmarshaling->pNext, sizeof(VkStructureType));
+        memcpy((void*)forUnmarshaling->pNext, *ptr, sizeof(VkStructureType));
+        *ptr += sizeof(VkStructureType);
+        VkStructureType extType = *(VkStructureType*)(forUnmarshaling->pNext);
+        vkStream->alloc((void**)&forUnmarshaling->pNext,
+                        goldfish_vk_extension_struct_size_with_stream_features(
+                            vkStream->getFeatureBits(), rootType, forUnmarshaling->pNext));
+        *(VkStructureType*)forUnmarshaling->pNext = extType;
+        reservedunmarshal_extension_struct(vkStream, rootType, (void*)(forUnmarshaling->pNext),
+                                           ptr);
+    }
+    uint8_t* out = reinterpret_cast<uint8_t*>(structExtension_out);
+    for (uint32_t i = 0; i < info->fieldCount; ++i) {
+        const QueryOnlyField& field = info->fields[i];
+        if (field.kind == QueryOnlyFieldKind::kSizeT) {
+            uint64_t value;
+            memcpy(&value, *ptr, sizeof(uint64_t));
+            gfxstream::Stream::fromBe64((uint8_t*)&value);
+            *ptr += sizeof(uint64_t);
+            size_t hostValue = (size_t)value;
+            memcpy(out + field.offset, &hostValue, sizeof(size_t));
+        } else {
+            memcpy(out + field.offset, *ptr, field.size);
+            *ptr += field.size;
+        }
+    }
+}
+
 void reservedunmarshal_extension_struct(VulkanStream* vkStream, VkStructureType rootType,
                                         void* structExtension_out, uint8_t** ptr) {
     VkInstanceCreateInfo* structAccess = (VkInstanceCreateInfo*)(structExtension_out);
@@ -18273,6 +18320,11 @@ void reservedunmarshal_extension_struct(VulkanStream* vkStream, VkStructureType 
         }
 #endif
         default: {
+            if (const QueryOnlyStructInfo* info = goldfish_vk_query_only_struct_info(structType)) {
+                reservedunmarshal_query_only_struct(vkStream, rootType, info, structExtension_out,
+                                                    ptr);
+                break;
+            }
             // fatal; the switch is only taken if the extension struct is known
             fprintf(stderr, " %s, Unhandled Vulkan structure type %s [%d], aborting.\n", __func__,
                     string_VkStructureType(VkStructureType(structType)), structType);

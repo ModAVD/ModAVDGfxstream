@@ -29,6 +29,8 @@
 //
 
 #include "goldfish_vk_extension_structs.h"
+
+#include "goldfish_vk_query_only_structs.h"
 namespace gfxstream {
 namespace host {
 namespace vk {
@@ -3010,6 +3012,9 @@ size_t goldfish_vk_extension_struct_size(VkStructureType rootType, const void* s
         }
 #endif
         default: {
+            if (const QueryOnlyStructInfo* info = goldfish_vk_query_only_struct_info(structType)) {
+                return info->structSize;
+            }
             const std::string structTypeString =
                 string_VkStructureType(VkStructureType(structType));
             GFXSTREAM_FATAL("Unhandled Vulkan structure type %s [%d], aborting.",
@@ -5997,6 +6002,9 @@ size_t goldfish_vk_extension_struct_size_with_stream_features(uint32_t streamFea
         }
 #endif
         default: {
+            if (const QueryOnlyStructInfo* info = goldfish_vk_query_only_struct_info(structType)) {
+                return info->structSize;
+            }
             const std::string structTypeString =
                 string_VkStructureType(VkStructureType(structType));
             GFXSTREAM_FATAL("Unhandled Vulkan structure type %s [%d], aborting.",

@@ -34,6 +34,7 @@
 
 #include "goldfish_vk_extension_structs.h"
 #include "goldfish_vk_private_defs.h"
+#include "goldfish_vk_query_only_structs.h"
 #include "vk_utils.h"
 
 namespace gfxstream {
@@ -10701,6 +10702,29 @@ void deepcopy_VkPhysicalDeviceImageCompressionControlSwapchainFeaturesEXT(
 }
 
 #endif
+// Copies a struct listed in goldfish_vk_query_only_structs.h: the fields are plain data, so a
+// byte copy is enough; the pNext chain is copied the same way the generated deepcopy_Vk* do.
+static void deepcopy_query_only_struct(Allocator* alloc, VkStructureType rootType,
+                                       const QueryOnlyStructInfo* info, const void* from,
+                                       void* to) {
+    memcpy(to, from, info->structSize);
+    if (rootType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+        rootType = static_cast<const VkBaseInStructure*>(from)->sType;
+    }
+    const void* from_pNext = from;
+    size_t pNext_size = 0u;
+    while (!pNext_size && from_pNext) {
+        from_pNext = static_cast<const VkBaseOutStructure*>(from_pNext)->pNext;
+        pNext_size = goldfish_vk_extension_struct_size(rootType, from_pNext);
+    }
+    VkBaseOutStructure* toBase = static_cast<VkBaseOutStructure*>(to);
+    toBase->pNext = nullptr;
+    if (pNext_size) {
+        toBase->pNext = (VkBaseOutStructure*)alloc->alloc(pNext_size);
+        deepcopy_extension_struct(alloc, rootType, from_pNext, (void*)(toBase->pNext));
+    }
+}
+
 void deepcopy_extension_struct(Allocator* alloc, VkStructureType rootType,
                                const void* structExtension, void* structExtension_out) {
     if (!structExtension) {
@@ -12641,6 +12665,11 @@ void deepcopy_extension_struct(Allocator* alloc, VkStructureType rootType,
         }
 #endif
         default: {
+            if (const QueryOnlyStructInfo* info = goldfish_vk_query_only_struct_info(structType)) {
+                deepcopy_query_only_struct(alloc, rootType, info, structExtension,
+                                           structExtension_out);
+                break;
+            }
             return;
         }
     }
