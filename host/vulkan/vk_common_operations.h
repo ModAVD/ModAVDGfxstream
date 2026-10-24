@@ -673,14 +673,21 @@ class VkEmulation {
 
     vk_util::YcbcrSamplerPool mYcbcrSamplerPool;
 
+    // The staging buffer starts small and grows on demand: host-visible memory is usually
+    // resident system memory, and most guests never transfer more than a frame at a time.
+    static constexpr VkDeviceSize kInitialStagingBufferSize = 16ULL * 1048576ULL;
     // 128 mb staging buffer (really, just a few 4K frames or one 4k HDR frame)
     // ought to be big enough for anybody!
-    static constexpr VkDeviceSize kDefaultStagingBufferSize = 128ULL * 1048576ULL;
+    static constexpr VkDeviceSize kMaxStagingBufferSize = 128ULL * 1048576ULL;
+
+    // Grows mStaging so that it holds at least `size` bytes (up to kMaxStagingBufferSize).
+    // Returns false if the size is too large or the buffer could not be recreated.
+    bool ensureStagingBufferSizeLocked(VkDeviceSize size) REQUIRES(mMutex);
 
     struct StagingBuffer {
         VkDeviceMemory mMemory = VK_NULL_HANDLE;
         VkBuffer mBuffer = VK_NULL_HANDLE;
-        VkDeviceSize mAllocationSize;
+        VkDeviceSize mAllocationSize = 0;
         void* mMappedPtr = nullptr;
         bool mIsHostCoherent = false;
 

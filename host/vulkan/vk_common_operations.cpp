@@ -402,6 +402,36 @@ void VkEmulation::StagingBuffer::destroy(VulkanDispatch* vk, VkDevice device) {
     }
 }
 
+bool VkEmulation::ensureStagingBufferSizeLocked(VkDeviceSize size) {
+    if (size <= mStaging.mAllocationSize && mStaging.mMappedPtr) {
+        return true;
+    }
+    if (size > kMaxStagingBufferSize) {
+        return false;
+    }
+
+    // Every user of the staging buffer waits on mCommandBufferFence before releasing mMutex,
+    // so the current buffer is idle and can be replaced.
+    const VkDeviceSize oldSize = mStaging.mAllocationSize;
+    const VkDeviceSize newSize = std::max(size, std::min(oldSize * 2, kMaxStagingBufferSize));
+    mStaging.destroy(mDvk, mDevice);
+    if (mStaging.create(mDvk, mDevice, &mDeviceInfo.memProps, mDebugUtilsHelper, newSize)) {
+        GFXSTREAM_INFO("Grew Vulkan staging buffer from %" PRIu64 " to %" PRIu64 " bytes.", oldSize,
+                       mStaging.mAllocationSize);
+        return true;
+    }
+
+    GFXSTREAM_ERROR("Failed to grow Vulkan staging buffer to %" PRIu64 " bytes.", newSize);
+    mStaging.destroy(mDvk, mDevice);
+    if (oldSize > 0 &&
+        mStaging.create(mDvk, mDevice, &mDeviceInfo.memProps, mDebugUtilsHelper, oldSize)) {
+        return false;
+    }
+    mStaging.destroy(mDvk, mDevice);
+    mStaging.mAllocationSize = 0;
+    return false;
+}
+
 ExternalMemory::Mode VkEmulation::getExternalMemoryMode() const {
     if (mDeviceInfo.externalMemoryMode == ExternalMemory::Mode::Unknown) {
         GFXSTREAM_FATAL("%s called before setting up external memory mode!", __func__);
@@ -1655,7 +1685,7 @@ std::unique_ptr<VkEmulation> VkEmulation::create(VulkanDispatch* gvk,
     if (!emulation->mStaging.create(dvk, emulation->mDevice,
                                     &emulation->mDeviceInfo.memProps,
                                     emulation->mDebugUtilsHelper,
-                                    kDefaultStagingBufferSize)) {
+                                    kInitialStagingBufferSize)) {
         GFXSTREAM_FATAL("Failed: Could not allocate staging buffer for Vulkan emulation");
     }
 
@@ -3476,11 +3506,10 @@ bool VkEmulation::readColorBufferToBytesLocked(uint32_t colorBufferHandle, uint3
     VkDeviceSize bufferCopySize = transferInfo.stagingBufferCopySize;
     const std::vector<VkBufferImageCopy>& bufferImageCopies = transferInfo.bufferImageCopies;
 
-    const VkDeviceSize stagingBufferSize = mStaging.mAllocationSize;
-    if (bufferCopySize > stagingBufferSize) {
+    if (!ensureStagingBufferSizeLocked(bufferCopySize)) {
         GFXSTREAM_ERROR("Failed to read ColorBuffer:%d, transfer size %" PRIu64
-                        " too large for staging buffer size:%" PRIu64 ".",
-                        colorBufferHandle, bufferCopySize, stagingBufferSize);
+                        " too large for staging buffer (max %" PRIu64 ").",
+                        colorBufferHandle, bufferCopySize, kMaxStagingBufferSize);
         return false;
     }
 
@@ -3882,11 +3911,11 @@ bool VkEmulation::readColorBufferPixelsScaledGpu(uint32_t colorBufferHandle, int
     // Verify the staging buffer is large enough for the scaled readback.
     const VkDeviceSize requiredStagingSize =
         static_cast<VkDeviceSize>(pixelsWidth) * static_cast<VkDeviceSize>(pixelsHeight) * readbackBpp;
-    if (requiredStagingSize > mStaging.mAllocationSize) {
+    if (!ensureStagingBufferSizeLocked(requiredStagingSize)) {
         GFXSTREAM_ERROR(
             "%s: Failed to read ColorBuffer:%u, transfer size %" PRIu64
-            " too large for staging buffer size:%" PRIu64 ".",
-            __func__, colorBufferHandle, requiredStagingSize, mStaging.mAllocationSize);
+            " too large for staging buffer (max %" PRIu64 ").",
+            __func__, colorBufferHandle, requiredStagingSize, kMaxStagingBufferSize);
         return false;
     }
 
@@ -4346,11 +4375,10 @@ bool VkEmulation::updateColorBufferFromBytesLocked(uint32_t colorBufferHandle, u
     VkDeviceSize dstBufferSize = transferInfo.stagingBufferCopySize;
     const std::vector<VkBufferImageCopy>& bufferImageCopies = transferInfo.bufferImageCopies;
 
-    const VkDeviceSize stagingBufferSize = mStaging.mAllocationSize;
-    if (dstBufferSize > stagingBufferSize) {
+    if (!ensureStagingBufferSizeLocked(dstBufferSize)) {
         GFXSTREAM_ERROR("Failed to update ColorBuffer:%d, transfer size %" PRIu64
-                        " too large for staging buffer size:%" PRIu64 ".",
-                        colorBufferHandle, dstBufferSize, stagingBufferSize);
+                        " too large for staging buffer (max %" PRIu64 ").",
+                        colorBufferHandle, dstBufferSize, kMaxStagingBufferSize);
         return false;
     }
 
@@ -4922,7 +4950,7 @@ bool VkEmulation::readBufferToBytes(uint32_t bufferHandle, uint64_t offset, uint
     }
 
     const auto& stagingBufferInfo = mStaging;
-    if (size > stagingBufferInfo.mAllocationSize) {
+    if (!ensureStagingBufferSizeLocked(size)) {
         GFXSTREAM_ERROR("Failed to read from Buffer:%d, staging buffer too small.", bufferHandle);
         return false;
     }
@@ -5021,7 +5049,7 @@ bool VkEmulation::updateBufferFromBytes(uint32_t bufferHandle, uint64_t offset, 
     }
 
     const auto& stagingBufferInfo = mStaging;
-    if (size > stagingBufferInfo.mAllocationSize) {
+    if (!ensureStagingBufferSizeLocked(size)) {
         GFXSTREAM_ERROR("Failed to update Buffer:%d, staging buffer too small.", bufferHandle);
         return false;
     }
