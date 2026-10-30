@@ -687,6 +687,8 @@ class VkEmulation {
     struct StagingBuffer {
         VkDeviceMemory mMemory = VK_NULL_HANDLE;
         VkBuffer mBuffer = VK_NULL_HANDLE;
+        // Logical VkBuffer capacity; memory requirements may include padding.
+        VkDeviceSize mBufferSize = 0;
         VkDeviceSize mAllocationSize = 0;
         void* mMappedPtr = nullptr;
         bool mIsHostCoherent = false;

@@ -380,10 +380,14 @@ bool VkEmulation::StagingBuffer::create(VulkanDispatch* vk, VkDevice device,
     debugUtilsHelper.addDebugLabel(mMemory, "AEMU_StagingBufferMemory");
     debugUtilsHelper.addDebugLabel(mBuffer, "AEMU_StagingBuffer");
 
+    // Publish capacity only after creation, allocation, mapping and binding succeed.
+    mBufferSize = size;
     return true;
 }
 
 void VkEmulation::StagingBuffer::destroy(VulkanDispatch* vk, VkDevice device) {
+    mBufferSize = 0;
+    mAllocationSize = 0;
     if (!vk || device == VK_NULL_HANDLE) {
         GFXSTREAM_WARNING("StagingBuffer::destroy: invalid parameters");
         return;
@@ -403,7 +407,7 @@ void VkEmulation::StagingBuffer::destroy(VulkanDispatch* vk, VkDevice device) {
 }
 
 bool VkEmulation::ensureStagingBufferSizeLocked(VkDeviceSize size) {
-    if (size <= mStaging.mAllocationSize && mStaging.mMappedPtr) {
+    if (size <= mStaging.mBufferSize && mStaging.mMappedPtr) {
         return true;
     }
     if (size > kMaxStagingBufferSize) {
@@ -412,12 +416,12 @@ bool VkEmulation::ensureStagingBufferSizeLocked(VkDeviceSize size) {
 
     // Every user of the staging buffer waits on mCommandBufferFence before releasing mMutex,
     // so the current buffer is idle and can be replaced.
-    const VkDeviceSize oldSize = mStaging.mAllocationSize;
+    const VkDeviceSize oldSize = mStaging.mBufferSize;
     const VkDeviceSize newSize = std::max(size, std::min(oldSize * 2, kMaxStagingBufferSize));
     mStaging.destroy(mDvk, mDevice);
     if (mStaging.create(mDvk, mDevice, &mDeviceInfo.memProps, mDebugUtilsHelper, newSize)) {
         GFXSTREAM_INFO("Grew Vulkan staging buffer from %" PRIu64 " to %" PRIu64 " bytes.", oldSize,
-                       mStaging.mAllocationSize);
+                       mStaging.mBufferSize);
         return true;
     }
 
@@ -428,7 +432,6 @@ bool VkEmulation::ensureStagingBufferSizeLocked(VkDeviceSize size) {
         return false;
     }
     mStaging.destroy(mDvk, mDevice);
-    mStaging.mAllocationSize = 0;
     return false;
 }
 
