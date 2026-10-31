@@ -56,7 +56,7 @@ class IColorBuffer {
     virtual bool flushFromBackend(Backend backend) = 0;
     virtual bool importHandle(void* handle, bool preserveContent) = 0;
 
-    virtual void readToBytes(int x, int y, int width, int height, GfxstreamFormat pixelsFormat,
+    virtual bool readToBytes(int x, int y, int width, int height, GfxstreamFormat pixelsFormat,
                              void* outPixels, uint64_t outPixelsSize) = 0;
     virtual void readToBytesScaled(int pixelsWidth, int pixelsHeight, int pixelsRotation,
                                    const Rect& rect, GfxstreamFormat pixelsFormat, void* outPixels,

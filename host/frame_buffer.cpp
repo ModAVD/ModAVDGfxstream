@@ -1601,7 +1601,10 @@ static bool readbackColorBufferWithoutWorker(ColorBuffer* cb, unsigned char* img
         return false;
     }
     const uint64_t size = 4ull * width * height;
-    cb->readToBytes(0, 0, static_cast<int>(width), static_cast<int>(height), format, img, size);
+    if (!cb->readToBytes(0, 0, static_cast<int>(width), static_cast<int>(height), format, img,
+                         size)) {
+        return false;
+    }
     const bool swapRedBlue = srcBgra != readBgra;
     if (swapRedBlue || srcNoAlpha) {
         for (uint64_t i = 0; i < size; i += 4) {

@@ -71,7 +71,7 @@ class ColorBuffer::Impl : public LazySnapshotObj<ColorBuffer::Impl> {
     uint32_t getHeight() const { return mHeight; }
     GfxstreamFormat getFormat() const { return mFormat; }
 
-    void readToBytes(int x, int y, int width, int height, GfxstreamFormat pixelsFormat,
+    bool readToBytes(int x, int y, int width, int height, GfxstreamFormat pixelsFormat,
                      void* outPixels, uint64_t outPixelsSize);
     void readToBytesScaled(int pixelsWidth, int pixelsHeight, int pixelsRotation, Rect rect,
                            GfxstreamFormat pixelsFormat, void* outPixels,
@@ -278,24 +278,24 @@ void ColorBuffer::Impl::restore() {
 #endif
 }
 
-void ColorBuffer::Impl::readToBytes(int x, int y, int width, int height,
+bool ColorBuffer::Impl::readToBytes(int x, int y, int width, int height,
                                     GfxstreamFormat pixelsFormat, void* outPixels,
                                     uint64_t outPixelsSize) {
     touch();
 
 #if GFXSTREAM_ENABLE_HOST_GLES
     if (mColorBufferGl) {
-        mColorBufferGl->readPixels(x, y, width, height, pixelsFormat, outPixels, outPixelsSize);
-        return;
+        return mColorBufferGl->readPixels(x, y, width, height, pixelsFormat, outPixels,
+                                         outPixelsSize);
     }
 #endif
 
     if (mColorBufferVk) {
-        mColorBufferVk->readToBytes(x, y, width, height, outPixels, outPixelsSize);
-        return;
+        return mColorBufferVk->readToBytes(x, y, width, height, outPixels, outPixelsSize);
     }
 
     GFXSTREAM_FATAL("%s: No ColorBuffer impl", __func__);
+    return false;
 }
 
 void ColorBuffer::Impl::readToBytesScaled(
@@ -569,9 +569,9 @@ uint32_t ColorBuffer::getHeight() const { return mImpl->getHeight(); }
 
 GfxstreamFormat ColorBuffer::getFormat() const { return mImpl->getFormat(); }
 
-void ColorBuffer::readToBytes(int x, int y, int width, int height, GfxstreamFormat pixelsFormat,
+bool ColorBuffer::readToBytes(int x, int y, int width, int height, GfxstreamFormat pixelsFormat,
                               void* outPixels, uint64_t outPixelsSize) {
-    mImpl->readToBytes(x, y, width, height, pixelsFormat, outPixels, outPixelsSize);
+    return mImpl->readToBytes(x, y, width, height, pixelsFormat, outPixels, outPixelsSize);
 }
 
 void ColorBuffer::readToBytesScaled(int pixelsWidth, int pixelsHeight, int pixelsRotation,

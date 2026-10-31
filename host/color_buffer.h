@@ -68,7 +68,7 @@ class ColorBuffer : public IColorBuffer, public LazySnapshotObj<ColorBuffer> {
     uint32_t getHeight() const override;
     GfxstreamFormat getFormat() const;
 
-    void readToBytes(int x, int y, int width, int height, GfxstreamFormat pixelsFormat,
+    bool readToBytes(int x, int y, int width, int height, GfxstreamFormat pixelsFormat,
                      void* outPixels, uint64_t outPixelsSize) override;
     void readToBytesScaled(int pixelsWidth, int pixelsHeight, int pixelsRotation, const Rect& rect,
                            GfxstreamFormat pixelsFormat, void* outPixels,
