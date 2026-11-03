@@ -73,8 +73,8 @@ public:
                 struct {
                     WorkerProcessingResult operator()(CleanProcessResources resources) {
                         FrameBuffer::getFB()->cleanupProcGLObjects(resources.puid);
-                        // resources.resource are destroyed automatically when going out of the
-                        // scope.
+                        // The process has no render thread left to read them.
+                        delete resources.resource;
                         return WorkerProcessingResult::Continue;
                     }
                     WorkerProcessingResult operator()(Exit) {
@@ -93,7 +93,7 @@ public:
     void cleanup(uint64_t processId, std::unique_ptr<ProcessResources> resource) {
         mCleanupWorker.enqueue(CleanProcessResources{
             .puid = processId,
-            .resource = std::move(resource),
+            .resource = resource.release(),
         });
     }
 
@@ -109,7 +109,10 @@ public:
 private:
     struct CleanProcessResources {
         uint64_t puid;
-        std::unique_ptr<ProcessResources> resource;
+        // Owned. MAS (ModAVD#40): render threads of the process read it until they exit, so
+        // only the processor deletes it, after cleanupProcGLObjects() has waited for them. A
+        // task that the stopping worker drops leaks it instead of freeing it under them.
+        ProcessResources* resource;
     };
     struct Exit {};
     using Cmd = std::variant<CleanProcessResources, Exit>;
@@ -568,6 +571,11 @@ void RendererImpl::onGuestGraphicsProcessCreate(uint64_t puid) {
 void RendererImpl::cleanupProcGLObjects(uint64_t puid) {
     std::unique_ptr<ProcessResources> resource =
         FrameBuffer::getFB()->removeGraphicsProcessResources(puid);
+    // The cleanup waits until the process has no render thread left. Mark the process dead
+    // first, so a render thread blocked in a fence or semaphore wait gives up (ModAVD#40).
+    if (resource) {
+        resource->setGuestProcessDead();
+    }
     mCleanupThread->cleanup(puid, std::move(resource));
 }
 

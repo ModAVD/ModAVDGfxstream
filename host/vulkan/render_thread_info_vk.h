@@ -40,6 +40,9 @@ struct RenderThreadInfoVk {
     bool onLoad(gfxstream::Stream* stream);
 
     uint32_t ctx_id = 0;
+    // MAS (ModAVD#40): the resources of the guest process this thread decodes for, or null.
+    // Set by RenderThread::main(); the process cleanup keeps them alive until this thread exits.
+    const ProcessResources* m_processResources = nullptr;
     VkDecoder m_vkDec;
 };
 

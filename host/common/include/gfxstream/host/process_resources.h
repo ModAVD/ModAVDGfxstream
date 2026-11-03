@@ -35,9 +35,19 @@ class ProcessResources {
     ~ProcessResources() = default;
     std::atomic<uint32_t>* getSequenceNumberPtr() const { return &mSequenceNumber; }
 
+    // MAS (ModAVD#40), named as in upstream gfxstream c1cecd29: set when the guest process is
+    // gone, before its cleanup is queued, so its render threads stop waiting for it.
+    void setGuestProcessDead(bool dead = true) const {
+        mGuestProcessDead.store(dead, std::memory_order_relaxed);
+    }
+    bool isGuestProcessDead() const {
+        return mGuestProcessDead.load(std::memory_order_relaxed);
+    }
+
    private:
     ProcessResources() : mSequenceNumber(0) {}
     mutable std::atomic<uint32_t> mSequenceNumber;
+    mutable std::atomic<bool> mGuestProcessDead{false};
 };
 
 }  // namespace host

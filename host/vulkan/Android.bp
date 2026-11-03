@@ -257,6 +257,35 @@ cc_test_host {
     ],
 }
 
+// Run with `atest --host gfxstream_vkwaitutils_tests`
+cc_test_host {
+    name: "gfxstream_vkwaitutils_tests",
+    defaults: ["gfxstream_host_cc_defaults"],
+    srcs: [
+        "vk_wait_utils_tests.cpp",
+    ],
+    shared_libs: [
+        "libbase",
+        "liblog",
+    ],
+    header_libs: [
+        "libgfxstream_host_vulkan_cereal_common",
+    ],
+    static_libs: [
+        "libgfxstream_common_logging",
+        "libgfxstream_host_vulkan_server",
+        "libgmock",
+        "libgtest",
+        "libgfxstream_common_base",
+    ],
+    test_options: {
+        unit_test: true,
+    },
+    test_suites: [
+        "general-tests",
+    ],
+}
+
 // Run with `atest --host gfxstream_vkguestqueueutils_tests`
 cc_test_host {
     name: "gfxstream_vkemulatedphysicaldevicequeue_tests",

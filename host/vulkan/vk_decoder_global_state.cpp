@@ -69,6 +69,7 @@
 #include "vk_emulated_physical_device_queue.h"
 #include "vk_format_utils.h"
 #include "vk_utils.h"
+#include "vk_wait_utils.h"
 #include "vulkan_boxed_handles.h"
 #include "vulkan_dispatch.h"
 #include "vulkan_stream.h"
@@ -4317,7 +4318,9 @@ class VkDecoderGlobalState::Impl {
         auto device = unbox_VkDevice(boxed_device);
         auto deviceDispatch = dispatch_VkDevice(boxed_device);
 
-        return deviceDispatch->vkWaitSemaphores(device, pWaitInfo, timeout);
+        return waitUnlessGuestProcessDead("vkWaitSemaphores", timeout, [&](uint64_t stepTimeoutNs) {
+            return deviceDispatch->vkWaitSemaphores(device, pWaitInfo, stepTimeoutNs);
+        });
     }
 
     VkResult onSemaphoreSignalledOnSharedQueue(VulkanDispatch* deviceDispatch,
@@ -9921,7 +9924,7 @@ class VkDecoderGlobalState::Impl {
             return VK_SUCCESS;
         }
 
-        const auto startTime = std::chrono::system_clock::now();
+        const auto startTime = std::chrono::steady_clock::now();
         for (uint32_t i = 0; i < fenceCount; i++) {
             VkFence fence = pFences[i];
             {
@@ -9979,10 +9982,34 @@ class VkDecoderGlobalState::Impl {
             }
         }
 
-        const auto endTime = std::chrono::system_clock::now();
+        const auto endTime = std::chrono::steady_clock::now();
         const uint64_t timePassed = std::chrono::nanoseconds(endTime - startTime).count();
-        const uint64_t timeoutLeft = (timeout > timePassed) ? timeout - timePassed : 0;
-        return vk->vkWaitForFences(unboxed_device, fenceCount, pFences, waitAll, timeoutLeft);
+        const uint64_t timeoutLeft = RemainingTimeoutNs(timeout, timePassed);
+        return waitUnlessGuestProcessDead(
+            "vkWaitForFences", timeoutLeft, [&](uint64_t stepTimeoutNs) {
+                return vk->vkWaitForFences(unboxed_device, fenceCount, pFences, waitAll,
+                                           stepTimeoutNs);
+            });
+    }
+
+    // MAS (ModAVD#40): a guest process killed during a long fence or semaphore wait would leave
+    // its render thread blocked in the driver, and the process cleanup, which waits for that
+    // thread, would block every later cleanup and the renderer's shutdown behind it. Wait in
+    // steps and give up once the process is gone, like upstream c1cecd29.
+    template <typename WaitFn>
+    VkResult waitUnlessGuestProcessDead(const char* what, uint64_t timeoutNs, WaitFn&& waitFn) {
+        const ProcessResources* processResources = nullptr;
+        if (auto* renderThreadInfo = RenderThreadInfoVk::get()) {
+            processResources = renderThreadInfo->m_processResources;
+        }
+        auto isProcessDead = [processResources] {
+            return processResources && processResources->isGuestProcessDead();
+        };
+        const VkResult result = WaitWithProcessDeathCheck(timeoutNs, isProcessDead, waitFn);
+        if (result == VK_TIMEOUT && isProcessDead()) {
+            GFXSTREAM_WARNING("MAS: %s gave up waiting: the guest process is gone", what);
+        }
+        return result;
     }
 
     VkResult waitForFence(VkFence fence, uint64_t timeout) {
