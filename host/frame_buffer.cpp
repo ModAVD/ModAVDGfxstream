@@ -805,6 +805,15 @@ class FrameBuffer::Impl : public gfxstream::base::EventNotificationSupport<Frame
     // Returns the set of ColorBuffers destroyed (for further cleanup)
     std::vector<HandleType> cleanupProcGLObjects_locked(uint64_t puid, bool forced = false);
 
+    // MAS local diagnostic: objects alive right now, logged around a guest process's cleanup.
+    struct GlObjectCounts {
+        size_t contexts = 0;
+        size_t windowSurfaces = 0;
+        size_t images = 0;
+        size_t colorBuffers = 0;
+    };
+    GlObjectCounts getGlObjectCountsLocked();
+
     void markOpened(ReferenceCountedColorBuffer* cbRef);
     // Returns true if the color buffer was erased.
     bool closeColorBufferLocked(HandleType p_colorbuffer, bool forced = false);
@@ -2423,6 +2432,10 @@ std::unique_ptr<ProcessResources> FrameBuffer::Impl::removeGraphicsProcessResour
 void FrameBuffer::Impl::cleanupProcGLObjects(uint64_t puid) {
     bool renderThreadWithThisPuidExists = false;
 
+    // MAS local diagnostic: a render thread that never exits blocks this cleanup, and every
+    // cleanup queued after it, forever. Say so every 5 s instead of waiting silently.
+    const auto waitStart = std::chrono::steady_clock::now();
+    auto nextWaitWarning = waitStart + std::chrono::seconds(5);
     do {
         renderThreadWithThisPuidExists = false;
         RenderThreadInfo::forAllRenderThreadInfos(
@@ -2432,12 +2445,27 @@ void FrameBuffer::Impl::cleanupProcGLObjects(uint64_t puid) {
             }
         });
         gfxstream::base::sleepUs(10000);
+        if (renderThreadWithThisPuidExists &&
+            std::chrono::steady_clock::now() >= nextWaitWarning) {
+            GFXSTREAM_WARNING("MAS: cleanup of process %" PRIu64
+                              " still waiting for its render threads after %lld s",
+                              puid,
+                              static_cast<long long>(
+                                  std::chrono::duration_cast<std::chrono::seconds>(
+                                      nextWaitWarning - waitStart)
+                                      .count()));
+            nextWaitWarning += std::chrono::seconds(5);
+        }
     } while (renderThreadWithThisPuidExists);
-
+    const long long waitMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - waitStart)
+                                 .count();
 
     AutoLock mutex(m_lock);
 
+    const GlObjectCounts before = getGlObjectCountsLocked();
     cleanupProcGLObjects_locked(puid);
+    const GlObjectCounts after = getGlObjectCountsLocked();
 
     // Run other cleanup callbacks
     // Avoid deadlock by first storing a separate list of callbacks
@@ -2454,6 +2482,13 @@ void FrameBuffer::Impl::cleanupProcGLObjects(uint64_t puid) {
     }
 
     mutex.unlock();
+
+    GFXSTREAM_INFO("MAS: cleaned up process %" PRIu64
+                   " after waiting %lld ms for its render threads; contexts %zu -> %zu, "
+                   "window surfaces %zu -> %zu, EGL images %zu -> %zu, color buffers %zu -> %zu",
+                   puid, waitMs, before.contexts, after.contexts, before.windowSurfaces,
+                   after.windowSurfaces, before.images, after.images, before.colorBuffers,
+                   after.colorBuffers);
 
     for (auto cb : callbacks) {
         cb();
@@ -2508,6 +2543,18 @@ std::vector<HandleType> FrameBuffer::Impl::cleanupProcGLObjects_locked(uint64_t 
     }
 
     return colorBuffersToCleanup;
+}
+
+FrameBuffer::Impl::GlObjectCounts FrameBuffer::Impl::getGlObjectCountsLocked() {
+    GlObjectCounts counts;
+#if GFXSTREAM_ENABLE_HOST_GLES
+    if (m_emulationGl) {
+        m_emulationGl->getObjectCounts(&counts.contexts, &counts.windowSurfaces, &counts.images);
+    }
+#endif
+    AutoLock colorBufferMapLock(m_colorBufferMapLock);
+    counts.colorBuffers = m_colorbuffers.size();
+    return counts;
 }
 
 void FrameBuffer::Impl::markOpened(ReferenceCountedColorBuffer* cbRef) {

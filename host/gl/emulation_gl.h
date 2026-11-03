@@ -189,6 +189,8 @@ class EmulationGl {
     void clearContextsAndWindowSurfaces();
     bool hasProcOwnedResources() const;
     std::vector<uint64_t> getGLPUIDs() const;
+    // MAS local diagnostic: how many contexts, window surfaces and EGLImages exist.
+    void getObjectCounts(size_t* contexts, size_t* windowSurfaces, size_t* images) const;
     void drainRenderThreadContexts();
     void drainRenderThreadSurfaces();
     void drainRenderThreadResources();

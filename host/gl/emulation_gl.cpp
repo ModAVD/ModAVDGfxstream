@@ -1408,6 +1408,13 @@ std::vector<uint64_t> EmulationGl::getGLPUIDs() const {
     return puids;
 }
 
+void EmulationGl::getObjectCounts(size_t* contexts, size_t* windowSurfaces,
+                                  size_t* images) const {
+    *contexts = mContexts.size();
+    *windowSurfaces = mWindows.size();
+    *images = mImages.size();
+}
+
 void EmulationGl::drainRenderThreadContexts() {
     gfxstream::base::AutoWriteLock contextLock(mContextStructureLock);
     RenderThreadInfoGl* const tinfo = RenderThreadInfoGl::get();
