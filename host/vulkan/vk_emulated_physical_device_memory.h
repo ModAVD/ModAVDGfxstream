@@ -63,6 +63,9 @@ class EmulatedPhysicalDeviceMemoryProperties {
     VkPhysicalDeviceMemoryProperties mHostMemoryProperties;
     uint32_t mGuestToHostMemoryTypeIndexMap[VK_MAX_MEMORY_TYPES];
     uint32_t mHostToGuestMemoryTypeIndexMap[VK_MAX_MEMORY_TYPES];
+    // MAS port of google/gfxstream e2ddfc73 (#209): the memory type reserved for AHBs with the
+    // VulkanUseDedicatedAhbMemoryType feature, which transformToGuestMemoryRequirements() skips.
+    std::optional<uint32_t> mGuestAhbMemoryTypeIndex;
 
     // The memory type index reported to the guest for VkDeviceMemory requirements which would
     // try to import host ColorBuffer allocations
