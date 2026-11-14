@@ -1804,6 +1804,12 @@ void FrameBuffer::Impl::setPostCallback(Renderer::OnPostCallback onPost, void* o
             {ReadbackCmd::AddRecordDisplay, displayId, nullptr, 0, w, h});
         completeFuture.wait();
     } else {
+        // Nothing to remove when this display was never recorded. The readback
+        // thread may not even be running then, and waiting on it here (while
+        // holding m_lock) would never return.
+        if (m_onPost.find(displayId) == m_onPost.end() || !m_readbackThreadStarted.load()) {
+            return;
+        }
         std::future<void> completeFuture = m_readbackThread.enqueue(
             {ReadbackCmd::DelRecordDisplay, displayId});
         completeFuture.wait();
