@@ -59,6 +59,7 @@
 #include "gfxstream/system/System.h"
 #include "host/gl/context_helper.h"
 #include "render-utils/MediaNative.h"
+#include "render-utils/readback_diagnostics.h"
 #include "render_thread_info.h"
 #include "sync_thread.h"
 #include "vulkan/display_vk.h"
@@ -402,12 +403,11 @@ class FrameBuffer::Impl : public gfxstream::base::EventNotificationSupport<Frame
 
     void readBuffer(HandleType p_buffer, uint64_t offset, uint64_t size, void* bytes);
 
-    void readColorBuffer(HandleType p_colorbuffer, int x, int y, int width, int height,
-                         GfxstreamFormat pixelsFormat, void* pixels,
-                         uint64_t outPixelsSize = std::numeric_limits<uint64_t>::max());
-    void readColorBufferDeprecated(HandleType p_colorbuffer, int x, int y, int width, int height,
+    bool readColorBuffer(HandleType p_colorbuffer, int x, int y, int width, int height,
+                         GfxstreamFormat pixelsFormat, void* pixels, uint64_t outPixelsSize);
+    bool readColorBufferDeprecated(HandleType p_colorbuffer, int x, int y, int width, int height,
                                    GLenum format, GLenum type, void* pixels,
-                                   uint64_t outPixelsSize = std::numeric_limits<uint64_t>::max());
+                                   uint64_t outPixelsSize);
 
     void readColorBufferYUV(HandleType p_colorbuffer, int x, int y, int width, int height,
                             void* pixels, uint32_t outPixelsSize);
@@ -1588,6 +1588,7 @@ FrameBuffer::Impl::~Impl() {
         vk::VkDecoderGlobalState::reset();
         m_emulationVk.reset();
     }
+    ReadbackDiagnostics::get().log();
 }
 
 // Synchronously reads |cb| into |img| for a post callback when there is no ReadbackWorker, i.e.
@@ -2580,7 +2581,7 @@ void FrameBuffer::Impl::readBuffer(HandleType handle, uint64_t offset, uint64_t 
     buffer->readToBytes(offset, size, bytes);
 }
 
-void FrameBuffer::Impl::readColorBuffer(HandleType p_colorbuffer, int x, int y, int width,
+bool FrameBuffer::Impl::readColorBuffer(HandleType p_colorbuffer, int x, int y, int width,
                                         int height, GfxstreamFormat pixelsFormat, void* outPixels,
                                         uint64_t outPixelsSize) {
     GFXSTREAM_TRACE_EVENT(GFXSTREAM_TRACE_DEFAULT_CATEGORY, "FrameBuffer::Impl::readColorBuffer()",
@@ -2591,25 +2592,24 @@ void FrameBuffer::Impl::readColorBuffer(HandleType p_colorbuffer, int x, int y, 
     IColorBufferRef colorBuffer = findColorBuffer(p_colorbuffer);
     if (!colorBuffer) {
         // bad colorbuffer handle
-        return;
+        return false;
     }
 
-    colorBuffer->readToBytes(x, y, width, height, pixelsFormat, outPixels, outPixelsSize);
+    return colorBuffer->readToBytes(x, y, width, height, pixelsFormat, outPixels, outPixelsSize);
 }
 
-void FrameBuffer::Impl::readColorBufferDeprecated(HandleType colorbuffer, int x, int y, int width,
+bool FrameBuffer::Impl::readColorBufferDeprecated(HandleType colorbuffer, int x, int y, int width,
                                                   int height, GLenum pixelsFormat,
-                                                  GLenum pixelsType,
-                                                  void* pixels, uint64_t pixelsSize) {
-
+                                                  GLenum pixelsType, void* pixels,
+                                                  uint64_t pixelsSize) {
     auto formatOpt = GetGfxstreamFormat(m_features, pixelsFormat, pixelsType);
     if (!formatOpt) {
         GFXSTREAM_ERROR("Unsupported pixel-format:%d pixel-type:%d",
                         pixelsFormat, pixelsType);
-        return;
+        return false;
     }
     auto format = *formatOpt;
-    readColorBuffer(colorbuffer, x, y, width, height, format, pixels);
+    return readColorBuffer(colorbuffer, x, y, width, height, format, pixels, pixelsSize);
 }
 
 void FrameBuffer::Impl::readColorBufferYUV(HandleType p_colorbuffer, int x, int y, int width,
@@ -2812,6 +2812,8 @@ AsyncResult FrameBuffer::Impl::postImpl(HandleType p_colorbuffer, Post::Completi
                 }
             }
 
+            ReadbackScope frameTrace(ReadbackSource::HostFrame, cb->getWidth(), cb->getHeight(),
+                                     4ull * cb->getWidth() * cb->getHeight());
             if (asyncReadbackSupported()) {
                 ensureReadbackWorker();
                 const auto status = m_readbackWorker->doNextReadback(
@@ -4806,17 +4808,18 @@ void FrameBuffer::readBuffer(HandleType p_buffer, uint64_t offset, uint64_t size
     mImpl->readBuffer(p_buffer, offset, size, bytes);
 }
 
-void FrameBuffer::readColorBuffer(HandleType p_colorbuffer, int x, int y, int width, int height,
+bool FrameBuffer::readColorBuffer(HandleType p_colorbuffer, int x, int y, int width, int height,
                                   GfxstreamFormat pixelsFormat, void* pixels,
                                   uint64_t outPixelsSize) {
-    mImpl->readColorBuffer(p_colorbuffer, x, y, width, height, pixelsFormat, pixels, outPixelsSize);
+    return mImpl->readColorBuffer(p_colorbuffer, x, y, width, height, pixelsFormat, pixels,
+                                  outPixelsSize);
 }
 
-void FrameBuffer::readColorBufferDeprecated(HandleType colorbuffer, int x, int y, int width,
+bool FrameBuffer::readColorBufferDeprecated(HandleType colorbuffer, int x, int y, int width,
                                             int height, GLenum pixelsFormat, GLenum pixelsType,
                                             void* pixels, uint64_t pixelsSize) {
-    mImpl->readColorBufferDeprecated(colorbuffer, x, y, width, height, pixelsFormat, pixelsType,
-                                     pixels, pixelsSize);
+    return mImpl->readColorBufferDeprecated(colorbuffer, x, y, width, height, pixelsFormat,
+                                            pixelsType, pixels, pixelsSize);
 }
 
 void FrameBuffer::readColorBufferYUV(HandleType p_colorbuffer, int x, int y, int width, int height,
@@ -4963,8 +4966,18 @@ bool FrameBuffer::isVulkanEnabled() const { return mImpl->isVulkanEnabled(); }
 int FrameBuffer::getScreenshot(unsigned int nChannels, unsigned int* width, unsigned int* height,
                                uint8_t* pixels, size_t* cPixels, int displayId, int desiredWidth,
                                int desiredHeight, int desiredRotation, Rect rect) {
-    return mImpl->getScreenshot(nChannels, width, height, pixels, cPixels, displayId, desiredWidth,
-                                desiredHeight, desiredRotation, rect);
+    ReadbackScope trace(pixels ? ReadbackSource::HostScreenshot : ReadbackSource::HostQuery,
+                        desiredWidth, desiredHeight, 0);
+    const int result = mImpl->getScreenshot(nChannels, width, height, pixels, cPixels, displayId,
+                                            desiredWidth, desiredHeight, desiredRotation, rect);
+    trace.result(result == 0 || (!pixels && result == Renderer::GET_SCREENSHOT_RESULT_PIXELS_SIZE));
+#ifdef CONFIG_AEMU
+    if (result == 0 || result == Renderer::GET_SCREENSHOT_RESULT_PIXELS_SIZE) {
+        trace.dimensions(static_cast<int>(*width), static_cast<int>(*height));
+        trace.bytes(*cPixels);
+    }
+#endif
+    return result;
 }
 
 int FrameBuffer::getColorBufferScreenshot(

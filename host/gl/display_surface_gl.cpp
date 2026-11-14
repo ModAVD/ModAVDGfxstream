@@ -106,18 +106,18 @@ class DisplaySurfaceGlContextHelper : public ContextHelper {
             }
 
             if (!s_egl.eglMakeCurrent(mDisplay, mSurface, mSurface, mContext)) {
+                const EGLint error = s_egl.eglGetError();
                 // b/284523053
                 // Legacy swiftshader logspam on exit with this line.
-                GFXSTREAM_DEBUG("Failed to make display surface context current: %d",
-                                s_egl.eglGetError());
+                GFXSTREAM_DEBUG("Failed to make display surface context current: %d", error);
                 // MAS local: say which thread and call site hold the context.
                 const SiteName mine = describeSite(site);
                 const SiteName theirs = describeSite(mOwnerSite.load());
                 GFXSTREAM_ERROR(
                     "MAS: thread %lu (site %s+0x%llx) could not make context %p current; "
-                    "thread %lu holds it (site %s+0x%llx)",
+                    "thread %lu holds it (site %s+0x%llx), eglError=0x%x surface=%p",
                     self, mine.module, mine.offset, mContext, mOwnerThread.load(),
-                    theirs.module, theirs.offset);
+                    theirs.module, theirs.offset, error, mSurface);
                 // Still add the previous context to the stack, so that
                 // teardownContext() restores it, but report the failure:
                 // GL calls made now would not reach this context.
@@ -281,6 +281,11 @@ DisplaySurfaceGl::DisplaySurfaceGl(EGLDisplay display,
       mContextHelper(new DisplaySurfaceGlContextHelper(display, surface, context)) {}
 
 DisplaySurfaceGl::~DisplaySurfaceGl() {
+    // Drain deferred objects before destroying the context they belong to.
+    if (mContextHelper->hasPendingCleanup()) {
+        RecursiveScopedContextBind bind(mContextHelper.get());
+    }
+    mContextHelper.reset();
     if (mDisplay != EGL_NO_DISPLAY) {
         if (mSurface) {
             s_egl.eglDestroySurface(mDisplay, mSurface);

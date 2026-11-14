@@ -274,6 +274,7 @@ TextureResize::TextureResize(GLuint width, GLuint height) :
 }
 
 TextureResize::~TextureResize() {
+    if (mAbandoned) return;
     GLuint tex[2] = {mFBWidth.texture, mFBHeight.texture};
     s_gles2.glDeleteTextures(2, tex);
     s_gles2.glDeleteBuffers(1, &mVertexBuffer);
@@ -615,6 +616,7 @@ GLuint TextureResize::GenericResizer::draw(GLuint texture, int width, int height
 }
 
 TextureResize::GenericResizer::~GenericResizer() {
+    if (mAbandoned) return;
     s_gles2.glDeleteFramebuffers(1, &mFrameBuffer.framebuffer);
     s_gles2.glDeleteTextures(1, &mFrameBuffer.texture);
     s_gles2.glUseProgram(0);

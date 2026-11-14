@@ -56,6 +56,7 @@ class YUVConverter {
     YUVConverter(int width, int height, GfxstreamFormat format);
     // destroy when ColorBuffer is destroyed
     ~YUVConverter();
+    void abandonGlResources() { mAbandoned = true; }
     // call when gralloc_unlock updates
     // the host color buffer
     // (rcUpdateColorBuffer)
@@ -78,6 +79,7 @@ class YUVConverter {
                                YuvPlane plane,
                                GLuint* outTextureName);
 private:
+    bool mAbandoned = false;
     bool init(int w, int h, GfxstreamFormat format);
     void reset();
 

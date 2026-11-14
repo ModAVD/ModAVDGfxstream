@@ -214,10 +214,11 @@ class FrameBuffer : public gfxstream::base::EventNotificationSupport<FrameBuffer
     // |type| is the type of pixel data, e.g. GL_UNSIGNED_BYTE.
     // |pixels| is the address of a caller-provided buffer that will be filled
     // with the pixel data.
+    // Returns the backend result, or false for an invalid handle or format.
     // |outPixelsSize| is the size of buffer
-    void readColorBuffer(HandleType p_colorbuffer, int x, int y, int width, int height,
+    bool readColorBuffer(HandleType p_colorbuffer, int x, int y, int width, int height,
                          GfxstreamFormat pixelsFormat, void* pixels, uint64_t outPixelsSize);
-    void readColorBufferDeprecated(HandleType p_colorbuffer, int x, int y, int width, int height,
+    bool readColorBufferDeprecated(HandleType p_colorbuffer, int x, int y, int width, int height,
                                    GLenum format, GLenum type, void* pixels,
                                    uint64_t outPixelsSize);
 

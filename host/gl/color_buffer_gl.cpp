@@ -21,12 +21,14 @@
 
 #include <cmath>
 #include <glm/gtc/type_ptr.hpp>
+#include <utility>
 
 #include "OpenGLESDispatch/DispatchTables.h"
 #include "OpenGLESDispatch/EGLDispatch.h"
 #include "common/gl_utils.h"
 #include "debug_gl.h"
 #include "gfxstream/host/renderer_operations.h"
+#include "render-utils/readback_diagnostics.h"
 #include "render_thread_info_gl.h"
 #include "texture_draw.h"
 #include "texture_resize.h"
@@ -38,6 +40,37 @@ namespace gl {
 namespace {
 
 using gfxstream::base::ManagedDescriptor;
+
+// Owns resources even after the public ColorBufferGl has gone away. Cleanup must
+// run in its original helper context because framebuffer names are not shared.
+struct ColorBufferGlCleanup {
+    ColorBufferGlCleanup() = default;
+    ColorBufferGlCleanup(ColorBufferGlCleanup&&) = default;
+    ~ColorBufferGlCleanup() {
+        // Leave native reclamation to EGL teardown when the helper is destroyed.
+        // CPU helpers must still be freed without calling GL elsewhere.
+        if (resizer) resizer->abandonGlResources();
+        if (yuv) yuv->abandonGlResources();
+    }
+    void run(ContextHelper::CleanupContext context) {
+        if (context == ContextHelper::CleanupContext::Lost) return;
+        if (blitImage) s_egl.eglDestroyImageKHR(display, blitImage);
+        if (image) s_egl.eglDestroyImageKHR(display, image);
+        if (fbo) s_gles2.glDeleteFramebuffers(1, &fbo);
+        if (yuvFbo) s_gles2.glDeleteFramebuffers(1, &yuvFbo);
+        if (scaleFbo) s_gles2.glDeleteFramebuffers(1, &scaleFbo);
+        yuv.reset();
+        s_gles2.glDeleteTextures(2, textures);
+        if (memory) s_gles2.glDeleteMemoryObjectsEXT(1, &memory);
+        resizer.reset();
+    }
+    EGLDisplay display = EGL_NO_DISPLAY;
+    EGLImageKHR image = nullptr, blitImage = nullptr;
+    GLuint textures[2] = {0, 0};
+    GLuint fbo = 0, yuvFbo = 0, scaleFbo = 0, memory = 0;
+    std::unique_ptr<TextureResize> resizer;
+    std::unique_ptr<YUVConverter> yuv;
+};
 
 // Lazily create and bind a framebuffer object to the current host context.
 // |fbo| is the address of the framebuffer object name.
@@ -424,47 +457,56 @@ ColorBufferGl::ColorBufferGl(EGLDisplay display, HandleType hndl, GLuint width, 
       m_helper(helper),
       m_textureDraw(textureDraw),
       m_pixelReadFormats(pixelReadFormats),
-      mHndl(hndl) {}
+      mHndl(hndl) {
+    ReadbackDiagnostics::get().colorBufferCreated(4ull * width * height);
+}
 
 ColorBufferGl::~ColorBufferGl() {
+    const uint64_t rgbaBytes = 4ull * m_width * m_height;
+    ReadbackDiagnostics::get().colorBufferReleased(rgbaBytes);
+    ColorBufferGlCleanup cleanup;
+    cleanup.display = m_display;
+    cleanup.image = m_eglImage;
+    cleanup.blitImage = m_blitEGLImage;
+    cleanup.textures[0] = m_tex;
+    cleanup.textures[1] = m_blitTex;
+    cleanup.fbo = m_fbo;
+    cleanup.yuvFbo = m_yuv_conversion_fbo;
+    cleanup.scaleFbo = m_scaleRotationFbo;
+    cleanup.memory = m_memoryObject;
+    cleanup.resizer.reset(std::exchange(m_resizer, nullptr));
+    cleanup.yuv = std::move(m_yuv_converter);
     RecursiveScopedContextBind context(m_helper);
-
-    // b/284523053
-    // Swiftshader logspam on exit. But it doesn't happen with SwANGLE.
     if (!context.isOk()) {
-        GFXSTREAM_DEBUG("Failed to bind context when releasing color buffers\n");
+        auto pending = std::make_shared<ColorBufferGlCleanup>(std::move(cleanup));
+        ReadbackDiagnostics::get().cleanupDeferred(rgbaBytes);
+        const auto handle = mHndl;
+        auto retire = [pending, handle, rgbaBytes](ContextHelper::CleanupContext mode) {
+            pending->run(mode);
+            const bool recovered = mode == ContextHelper::CleanupContext::Current;
+            ReadbackDiagnostics::get().cleanupFinished(rgbaBytes, recovered);
+            if (recovered &&
+                ReadbackDiagnostics::get().shouldLog(DiagnosticEvent::CleanupRecovered)) {
+                GFXSTREAM_INFO("MAS: recovered deferred ColorBuffer GL cleanup handle=%u", handle);
+            } else if (!recovered &&
+                       ReadbackDiagnostics::get().shouldLog(DiagnosticEvent::CleanupAbandoned)) {
+                GFXSTREAM_ERROR(
+                    "MAS: context lost with deferred ColorBuffer GL cleanup "
+                    "handle=%u rgbaEstimateBytes=%llu; freeing CPU ownership",
+                    handle, static_cast<unsigned long long>(rgbaBytes));
+            }
+        };
+        const size_t count = m_helper ? m_helper->deferCleanup(std::move(retire)) : 0;
+        if (!m_helper) retire(ContextHelper::CleanupContext::Lost);
+        if (ReadbackDiagnostics::get().shouldLog(DiagnosticEvent::CleanupDeferred)) {
+            GFXSTREAM_ERROR(
+                "MAS: deferred ColorBuffer GL cleanup handle=%u size=%ux%u "
+                "rgbaEstimateBytes=%llu pending=%zu",
+                mHndl, m_width, m_height, static_cast<unsigned long long>(rgbaBytes), count);
+        }
         return;
     }
-
-    if (m_blitEGLImage) {
-        s_egl.eglDestroyImageKHR(m_display, m_blitEGLImage);
-    }
-    if (m_eglImage) {
-        s_egl.eglDestroyImageKHR(m_display, m_eglImage);
-    }
-
-    if (m_fbo) {
-        s_gles2.glDeleteFramebuffers(1, &m_fbo);
-    }
-
-    if (m_yuv_conversion_fbo) {
-        s_gles2.glDeleteFramebuffers(1, &m_yuv_conversion_fbo);
-    }
-
-    if (m_scaleRotationFbo) {
-        s_gles2.glDeleteFramebuffers(1, &m_scaleRotationFbo);
-    }
-
-    m_yuv_converter.reset();
-
-    GLuint tex[2] = {m_tex, m_blitTex};
-    s_gles2.glDeleteTextures(2, tex);
-
-    if (m_memoryObject) {
-        s_gles2.glDeleteMemoryObjectsEXT(1, &m_memoryObject);
-    }
-
-    delete m_resizer;
+    cleanup.run(ContextHelper::CleanupContext::Current);
 }
 
 
@@ -526,6 +568,8 @@ bool ColorBufferGl::isReadbackToFormatSupported(GfxstreamFormat outputFormat) {
 
 bool ColorBufferGl::readPixels(int x, int y, int width, int height, GfxstreamFormat pixelFormat,
                                void* pixels, uint32_t pixelsSize) {
+    ReadbackScope trace(ReadbackSource::GlPixels, width, height, 0, ReadbackOutcome::Failed);
+    trace.identity(mHndl);
     RecursiveScopedContextBind context(m_helper);
     if (!context.isOk()) {
         return false;
@@ -541,6 +585,7 @@ bool ColorBufferGl::readPixels(int x, int y, int width, int height, GfxstreamFor
         return false;
     }
     const FormatOpenglParams& formatParams = *formatParamsOpt;
+    trace.bytes(static_cast<uint64_t>(std::max(width, 0)) * std::max(height, 0) * formatParams.bpp);
 
     uint32_t sizeNeeded = width * height * formatParams.bpp;
     if (pixelsSize < sizeNeeded) {
@@ -581,12 +626,24 @@ bool ColorBufferGl::readPixels(int x, int y, int width, int height, GfxstreamFor
     }
     s_gles2.glPixelStorei(GL_PACK_ALIGNMENT, prevAlignment);
     unbindFbo();
+    trace.result(res);
     return res;
 }
 
 bool ColorBufferGl::readPixelsScaled(int width, int height, int rotation, const Rect& rect,
                                      GfxstreamFormat pixelsFormat, void* pixels,
                                      const std::optional<std::array<float, 16>>& colorTransform) {
+    ReadbackScope trace(ReadbackSource::GlScaled, width, height, 0, ReadbackOutcome::Failed);
+    trace.identity(mHndl);
+    const auto format = GetFormatOpenglParameters(pixelsFormat);
+    if (format) {
+        const bool snipping = rect.size.w != 0 && rect.size.h != 0;
+        const int readWidth = snipping ? rect.size.w : width;
+        const int readHeight = snipping ? rect.size.h : height;
+        trace.dimensions(readWidth, readHeight);
+        trace.bytes(static_cast<uint64_t>(std::max(readWidth, 0)) * std::max(readHeight, 0) *
+                    format->bpp);
+    }
     RecursiveScopedContextBind context(m_helper);
     if (!context.isOk()) {
         return false;
@@ -691,6 +748,7 @@ bool ColorBufferGl::readPixelsScaled(int width, int height, int rotation, const 
         }
         s_gles2.glPixelStorei(GL_PACK_ALIGNMENT, prevAlignment);
         unbindFbo();
+        trace.result(true);
         return true;
     }
 

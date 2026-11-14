@@ -1007,7 +1007,7 @@ void YUVConverter::reset() {
 }
 
 YUVConverter::~YUVConverter() {
-    reset();
+    if (!mAbandoned) reset();
 }
 
 }  // namespace gl

@@ -36,6 +36,7 @@
 #include "gfxstream/synchronization/Lock.h"
 #include "gfxstream/synchronization/MessageChannel.h"
 #include "gfxstream/system/System.h"
+#include "render-utils/readback_diagnostics.h"
 #include "render_thread_info.h"
 #include "vulkan/vk_common_operations.h"
 #include "vulkan/vk_decoder_context.h"
@@ -74,6 +75,7 @@ static std::atomic<uint32_t> sActiveRenderThreads{0};
 static const uint32_t kWarnMaxRenderThreads = 1000;
 
 static void incrementAndCheckRenderThreadCount() {
+    ReadbackDiagnostics::get().renderThreadCreated();
     uint32_t count = ++sActiveRenderThreads;
     GFXSTREAM_VERBOSE("Created RenderThread. Active RenderThreads: %u", count);
     if (count > kWarnMaxRenderThreads) {
@@ -135,6 +137,7 @@ RenderThread::RenderThread(const AsgConsumerCreateInfo& info, Stream* load)
 // than from RenderThread::main() so thread specific cleanup likely belongs at
 // the end of RenderThread::main().
 RenderThread::~RenderThread() {
+    ReadbackDiagnostics::get().renderThreadReleased();
     decrementRenderThreadCount();
 }
 

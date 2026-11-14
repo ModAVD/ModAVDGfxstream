@@ -28,15 +28,21 @@
 #include <wingdi.h>
 
 #include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstdint>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 
-#include "core_profile_configs.h"
 #include "common/gl_library.h"
+#include "core_profile_configs.h"
+#include "gfxstream/common/logging.h"
 #include "gfxstream/shared_library.h"
 #include "gfxstream/synchronization/Lock.h"
-#include "gfxstream/common/logging.h"
 
 #define IS_TRUE(a) \
         do { if (!(a)) return NULL; } while (0)
@@ -516,6 +522,32 @@ private:
     int mConfigId = 0;
 };
 
+using WglClock = std::chrono::steady_clock;
+
+enum class WglFailure { GetDc, ReleaseDc, Create, Destroy, QueueFull, Abandoned, Count };
+
+class WglFailureLog {
+   public:
+    bool allow(WglFailure kind) {
+        std::lock_guard<std::mutex> lock(mMutex);
+        const auto now = WglClock::now();
+        if (now - mWindow >= std::chrono::minutes(1)) {
+            mWindow = now;
+            mReported.fill(0);
+        }
+        auto& reported = mReported[static_cast<size_t>(kind)];
+        if (reported == 3) return false;
+        ++reported;
+        return true;
+    }
+
+   private:
+    std::mutex mMutex;
+    WglClock::time_point mWindow{};
+    std::array<unsigned, static_cast<size_t>(WglFailure::Count)> mReported{};
+};
+static WglFailureLog sWglFailureLog;
+
 class WinSurface : public EglOS::Surface {
 public:
     explicit WinSurface(HWND wnd, const WglExtensionsDispatch* dispatch) :
@@ -535,22 +567,32 @@ public:
     bool releaseDC() {
         if (m_dcReleased) return true;
 
-        bool res = false;
-        if (m_dispatch->wglReleasePbufferDC) {
-            res = m_dispatch->wglReleasePbufferDC(m_pb, m_hdc);
-            m_hdc = 0;
-            m_dcReleased = true;
+        SetLastError(0);
+        if (!m_dispatch->wglReleasePbufferDC || !m_dispatch->wglReleasePbufferDC(m_pb, m_hdc)) {
+            const DWORD error = GetLastError();
+            if (sWglFailureLog.allow(WglFailure::ReleaseDc))
+                GFXSTREAM_ERROR("MAS: wglReleasePbufferDC(%p, %p) failed: error 0x%lx", m_pb, m_hdc,
+                                error);
+            return false;
         }
-        return res;
+        m_hdc = nullptr;
+        m_dcReleased = true;
+        return true;
     }
 
     bool refreshDC() {
-        if (!m_dcReleased) releaseDC();
+        if (!releaseDC()) return false;
         if (m_dispatch->wglGetPbufferDC) {
+            SetLastError(0);
             m_hdc = m_dispatch->wglGetPbufferDC(m_pb);
         }
 
-        if (!m_hdc) return false;
+        if (!m_hdc) {
+            const DWORD error = GetLastError();
+            if (sWglFailureLog.allow(WglFailure::GetDc))
+                GFXSTREAM_ERROR("MAS: wglGetPbufferDC(%p) failed: error 0x%lx", m_pb, error);
+            return false;
+        }
 
         m_dcReleased = false;
 
@@ -1056,44 +1098,39 @@ public:
         gfxstream::base::AutoLock lock(sGlobalLock);
         (void)info;
 
-        bool needPrime = false;
-
         auto& freeElts = mFreePbufs[pixelFormat];
-
-        if (freeElts.empty()) {
-            needPrime = true;
-        }
-
-        if (needPrime) {
-            // Policy here is based on the behavior of Android UI when opening
-            // and closing lots of apps, and to avoid frequent pauses to create
-            // pbuffers.  We start by priming with 8 pbuffers, and then double
-            // the current set of live pbuffers each time. This will then
-            // require only a few primings (up to ~32 pbuffers) to make it
-            // unnecessary to create or delete a pbuffer ever again after that.
-            // Creating many pbuffers in a batch is faster than interrupting
-            // the process at various times to create them one at a time.
+        // Try every existing free object before allocating a replacement. At
+        // most one bounded priming batch is attempted per caller request.
+        for (int pass = 0; pass < 2; ++pass) {
+            while (!freeElts.empty()) {
+                EglOS::Surface* surface = freeElts.back();
+                freeElts.pop_back();
+                if (WinSurface::from(surface)->refreshDC()) {
+                    mLivePbufs[pixelFormat].insert(surface);
+                    logPbufferStatsLocked();
+                    return surface;
+                }
+                ++mPbufferRefreshFailures;
+                // Some Intel drivers hang if we destroy here. Retire the bad
+                // object, then try the next healthy cached object instead.
+                queuePbufferForDeletionLocked(surface);
+            }
+            if (pass == 1) break;
             PROFILE_SLOW("createPbufferSurface (slow path)");
-            int toCreate = std::max((int)mLivePbufs[pixelFormat].size(), kPbufPrimingCount);
-            for (int i = 0; i < toCreate; i++) {
-                freeElts.push_back(createPbufferSurfaceImpl(pixelFormat));
+            const size_t toCreate =
+                std::max(mLivePbufs[pixelFormat].size(), static_cast<size_t>(kPbufPrimingCount));
+            for (size_t i = 0; i < toCreate; ++i) {
+                auto result = createPbufferSurfaceImpl(pixelFormat);
+                if (auto* surface = std::get_if<EglOS::Surface*>(&result)) {
+                    freeElts.push_back(*surface);
+                } else if (std::get<PbufferCreateError>(result) == PbufferCreateError::Allocation) {
+                    break;
+                }
+                // A transient first DC failure consumes only this priming slot.
             }
         }
-
-        PROFILE_SLOW("createPbufferSurface (fast path)");
-        EglOS::Surface* surf = freeElts.back();
-        WinSurface* winSurface = WinSurface::from(surf);
-        if (!winSurface->refreshDC()) {
-            // TODO: Figure out why some Intel GPUs can hang flakily if
-            // we just destroy the pbuffer here.
-            mDeletePbufs.push_back(surf);
-            surf = createPbufferSurfaceImpl(pixelFormat);
-        }
-        freeElts.pop_back();
-
-        mLivePbufs[pixelFormat].insert(surf);
-
-        return surf;
+        logPbufferStatsLocked();
+        return nullptr;
     }
 
     virtual bool releasePbuffer(EglOS::Surface* pb) {
@@ -1102,25 +1139,66 @@ public:
 
         WinSurface* winpb = WinSurface::from(pb);
 
-        if (!winpb->releaseDC()) return false;
-
         const EglOS::PixelFormat* pixelFormat =
             winpb->getPixelFormat();
 
-        auto& frees = mFreePbufs[pixelFormat];
-        frees.push_back(pb);
-
         mLivePbufs[pixelFormat].erase(pb);
-
-        for (auto surf : mDeletePbufs) {
-            WinSurface* winSurface = WinSurface::from(surf);
-            mDispatch->wglDestroyPbuffer(winSurface->getPbuffer());
-            delete winSurface;
+        const bool released = winpb->releaseDC();
+        if (released) {
+            mFreePbufs[pixelFormat].push_back(pb);
+        } else {
+            ++mPbufferReleaseFailures;
+            // The EGL surface has relinquished ownership. Never reuse a DC whose
+            // release failed. Keep the pbuffer owned until native destruction succeeds.
+            queuePbufferForDeletionLocked(pb);
         }
 
-        mDeletePbufs.clear();
-
-        return true;
+        // Bounded round-robin work. A persistent driver failure must not make
+        // every unrelated surface release walk the entire backlog.
+        const auto now = WglClock::now();
+        const size_t count = std::min(mDeletePbufs.size(), kPbufferRetryBatch);
+        for (size_t i = 0; i < count; ++i) {
+            auto pending = mDeletePbufs.front();
+            mDeletePbufs.pop_front();
+            if (now - pending.queuedAt >= kPbufferLifetime) {
+                abandonPbufferLocked(pending.surface, "age-limit");
+                continue;
+            }
+            if (pending.retryAt > now) {
+                mDeletePbufs.push_back(pending);
+                continue;
+            }
+            ++pending.attempts;
+            WinSurface* winSurface = WinSurface::from(pending.surface);
+            // Keep the Intel workaround: only destroy on this release path.
+            winSurface->releaseDC();
+            SetLastError(0);
+            if (!mDispatch->wglDestroyPbuffer(winSurface->getPbuffer())) {
+                const DWORD error = GetLastError();
+                ++mPbufferDestroyFailures;
+                mLastPbufferDestroyError = error;
+                mLastFailedPbuffer = winSurface->getPbuffer();
+                if (sWglFailureLog.allow(WglFailure::Destroy)) {
+                    GFXSTREAM_ERROR("MAS: wglDestroyPbuffer(%p) failed: error 0x%lx; pending=%zu",
+                                    winSurface->getPbuffer(), error, mDeletePbufs.size() + 1);
+                }
+                if (HRESULT_CODE(error) != ERROR_INVALID_HANDLE) {
+                    if (pending.attempts == kMaxPbufferRetries) {
+                        abandonPbufferLocked(pending.surface, "retry-limit");
+                    } else {
+                        pending.retryAt = now + std::chrono::seconds(1);
+                        mDeletePbufs.push_back(pending);
+                    }
+                    continue;
+                }
+                ++mPbuffersInvalid;
+            } else {
+                ++mPbuffersDestroyed;
+            }
+            delete winSurface;
+        }
+        logPbufferStatsLocked();
+        return released;
     }
 
     virtual bool makeCurrent(EglOS::Surface* read,
@@ -1239,7 +1317,13 @@ private:
         }
     }
 
-    EglOS::Surface* createPbufferSurfaceImpl(const EglOS::PixelFormat* pixelFormat) {
+    enum class PbufferCreateError { Allocation, DcUnavailable };
+    using PbufferCreation = std::variant<EglOS::Surface*, PbufferCreateError>;
+
+    PbufferCreation createPbufferSurfaceImpl(const EglOS::PixelFormat* pixelFormat) {
+        // A backlog may contain stale driver handles. It must never deny a
+        // healthy native allocation. Its CPU records are bounded separately.
+        expirePbuffersLocked();
         // we never care about width or height, since we just use
         // opengl fbos anyway.
         const WinPixelFormat* format = WinPixelFormat::from(pixelFormat);
@@ -1247,14 +1331,105 @@ private:
 
         const WglExtensionsDispatch* dispatch = mDispatch;
         if (!dispatch->wglCreatePbuffer) {
-            return NULL;
+            return PbufferCreateError::Allocation;
         }
+        SetLastError(0);
         HPBUFFERARB pb = dispatch->wglCreatePbuffer(dpy, format->configId(), 1, 1, nullptr);
         if (!pb) {
-            GetLastError();
-            return NULL;
+            const DWORD error = GetLastError();
+            if (sWglFailureLog.allow(WglFailure::Create))
+                GFXSTREAM_ERROR("MAS: wglCreatePbuffer failed format=%d error=0x%lx",
+                                format->configId(), error);
+            return PbufferCreateError::Allocation;
         }
-        return new WinSurface(pb, pixelFormat, dispatch);
+        ++mPbuffersCreated;
+        auto* surface = new WinSurface(pb, pixelFormat, dispatch);
+        if (!surface->getDC()) {
+            ++mPbufferRefreshFailures;
+            queuePbufferForDeletionLocked(surface);
+            logPbufferStatsLocked();
+            return PbufferCreateError::DcUnavailable;
+        }
+        return static_cast<EglOS::Surface*>(surface);
+    }
+
+    void abandonPbufferLocked(EglOS::Surface* surface, const char* reason) {
+        auto* winSurface = WinSurface::from(surface);
+        ++mPbuffersAbandoned;
+        if (sWglFailureLog.allow(WglFailure::Abandoned)) {
+            GFXSTREAM_ERROR(
+                "MAS: pbuffer cleanup abandoned handle=%p reason=%s "
+                "possibleNativeLeaks=%llu",
+                winSurface->getPbuffer(), reason,
+                static_cast<unsigned long long>(mPbuffersAbandoned));
+        }
+        // Free CPU ownership only; never claim native destruction succeeded.
+        delete winSurface;
+    }
+
+    void expirePbuffersLocked() {
+        const auto now = WglClock::now();
+        for (auto it = mDeletePbufs.begin(); it != mDeletePbufs.end();) {
+            if (now - it->queuedAt < kPbufferLifetime) {
+                ++it;
+                continue;
+            }
+            abandonPbufferLocked(it->surface, "age-limit");
+            it = mDeletePbufs.erase(it);
+        }
+    }
+
+    void queuePbufferForDeletionLocked(EglOS::Surface* surface) {
+        expirePbuffersLocked();
+        if (mDeletePbufs.size() == kPbufferBacklogBudget) {
+            ++mPbufferQueueEvictions;
+            if (sWglFailureLog.allow(WglFailure::QueueFull)) {
+                GFXSTREAM_ERROR(
+                    "MAS: pbuffer backlog full: pending=%zu limit=%zu; "
+                    "retiring an unconfirmed CPU record",
+                    mDeletePbufs.size(), kPbufferBacklogBudget);
+            }
+            abandonPbufferLocked(mDeletePbufs.front().surface, "queue-limit");
+            mDeletePbufs.pop_front();
+        }
+        const auto now = WglClock::now();
+        mDeletePbufs.push_back({surface, now, now, 0});
+    }
+
+    void logPbufferStatsLocked() {
+        const auto now = WglClock::now();
+        if (now - mLastPbufferLog < std::chrono::minutes(1)) return;
+        size_t live = 0, free = 0;
+        for (const auto& entry : mLivePbufs) live += entry.second.size();
+        for (const auto& entry : mFreePbufs) free += entry.second.size();
+        const std::array<uint64_t, 11> stats = {mPbuffersCreated,
+                                                mPbuffersDestroyed,
+                                                live,
+                                                free,
+                                                mDeletePbufs.size(),
+                                                mPbuffersInvalid,
+                                                mPbufferReleaseFailures,
+                                                mPbufferRefreshFailures,
+                                                mPbufferDestroyFailures,
+                                                mPbufferQueueEvictions,
+                                                mPbuffersAbandoned};
+        mLastPbufferLog = now;
+        if (stats == mLastPbufferStats) return;
+        mLastPbufferStats = stats;
+        GFXSTREAM_INFO(
+            "MAS: native pbuffers created=%llu destroyed=%llu live=%zu "
+            "free=%zu pending=%zu invalid=%llu dcReleaseFailures=%llu "
+            "refreshFailures=%llu destroyFailures=%llu queueEvictions=%llu "
+            "abandoned=%llu pendingLimit=%zu lastDestroyError=0x%lx lastFailed=%p",
+            static_cast<unsigned long long>(mPbuffersCreated),
+            static_cast<unsigned long long>(mPbuffersDestroyed), live, free, mDeletePbufs.size(),
+            static_cast<unsigned long long>(mPbuffersInvalid),
+            static_cast<unsigned long long>(mPbufferReleaseFailures),
+            static_cast<unsigned long long>(mPbufferRefreshFailures),
+            static_cast<unsigned long long>(mPbufferDestroyFailures),
+            static_cast<unsigned long long>(mPbufferQueueEvictions),
+            static_cast<unsigned long long>(mPbuffersAbandoned), kPbufferBacklogBudget,
+            mLastPbufferDestroyError, mLastFailedPbuffer);
     }
 
     bool mCoreProfileSupported = false;
@@ -1267,7 +1442,28 @@ private:
 
     std::unordered_map<const EglOS::PixelFormat*, std::vector<EglOS::Surface* > > mFreePbufs;
     std::unordered_map<const EglOS::PixelFormat*, std::unordered_set<EglOS::Surface* > > mLivePbufs;
-    std::vector<EglOS::Surface*> mDeletePbufs;
+    struct PendingPbuffer {
+        EglOS::Surface* surface;
+        WglClock::time_point retryAt;
+        WglClock::time_point queuedAt;
+        unsigned attempts;
+    };
+    std::deque<PendingPbuffer> mDeletePbufs;
+    uint64_t mPbuffersCreated = 0;
+    uint64_t mPbuffersDestroyed = 0;
+    uint64_t mPbufferReleaseFailures = 0;
+    uint64_t mPbufferRefreshFailures = 0;
+    uint64_t mPbuffersInvalid = 0;
+    uint64_t mPbufferDestroyFailures = 0;
+    uint64_t mPbuffersAbandoned = 0, mPbufferQueueEvictions = 0;
+    DWORD mLastPbufferDestroyError = 0;
+    HPBUFFERARB mLastFailedPbuffer = nullptr;
+    WglClock::time_point mLastPbufferLog{};
+    std::array<uint64_t, 11> mLastPbufferStats{};
+    static constexpr size_t kPbufferBacklogBudget = 64;
+    static constexpr unsigned kMaxPbufferRetries = 8;
+    static constexpr std::chrono::seconds kPbufferLifetime{60};
+    static constexpr size_t kPbufferRetryBatch = 8;
     static constexpr int kPbufPrimingCount = 8;
 };
 

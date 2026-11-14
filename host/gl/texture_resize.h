@@ -27,6 +27,11 @@ class TextureResize {
 public:
     TextureResize(GLuint width, GLuint height);
     ~TextureResize();
+    // Only for terminal context loss: release CPU state without making GL calls.
+    void abandonGlResources() {
+        mAbandoned = true;
+        if (mGenericResizer) mGenericResizer->abandonGlResources();
+    }
 
     // Scales the given texture for the current viewport and returns the scaled
     // texture. May return the input if no scaling is required.
@@ -45,12 +50,14 @@ public:
     public:
         GenericResizer();
         ~GenericResizer();
+        void abandonGlResources() { mAbandoned = true; }
 
         // Renders the contents of 2D |input_texture| on screen
         // |width| and |height| are the dimensions of the texture.
         GLuint draw(GLuint texture, int width, int height, int skinRotation);
 
     private:
+        bool mAbandoned = false;
         GLuint mProgram;
         GLuint mVertexBuffer;
         GLuint mIndexBuffer;
@@ -67,6 +74,7 @@ private:
     void resize(GLuint texture);
 
 private:
+    bool mAbandoned = false;
     GLuint mWidth;
     GLuint mHeight;
     unsigned int mFactor;

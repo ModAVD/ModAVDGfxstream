@@ -27,6 +27,7 @@
 #include "host/gl/gles_version_detector.h"
 #include "OpenGLESDispatch/DispatchTables.h"
 #include "OpenGLESDispatch/EGLDispatch.h"
+#include "render-utils/readback_diagnostics.h"
 #include "render_thread_info.h"
 #include "host/gl/render_thread_info_gl.h"
 #include "vulkan/render_thread_info_vk.h"
@@ -991,13 +992,17 @@ static EGLint rcColorBufferCacheFlush(uint32_t colorBuffer,
 
 static void rcReadColorBuffer(uint32_t colorBuffer, GLint x, GLint y, GLint width, GLint height,
                               GLenum format, GLenum type, void* pixels, uint32_t pixels_size) {
+    ReadbackScope trace(ReadbackSource::Guest, width, height, pixels_size);
+    const auto* threadInfo = RenderThreadInfo::get();
+    trace.identity(colorBuffer, threadInfo ? threadInfo->m_puid : 0);
     FrameBuffer* fb = FrameBuffer::getFB();
     if (!fb) {
+        trace.result(false);
         return;
     }
 
-    fb->readColorBufferDeprecated(colorBuffer, x, y, width, height, format, type, pixels,
-                                  pixels_size);
+    trace.result(fb->readColorBufferDeprecated(colorBuffer, x, y, width, height, format, type,
+                                               pixels, pixels_size));
 }
 
 static int rcUpdateColorBuffer(uint32_t colorBuffer,
@@ -1597,14 +1602,20 @@ static int rcReadColorBufferDMA(uint32_t colorBuffer,
                                 GLenum format, GLenum type, void* pixels,
                                 uint32_t pixels_size)
 {
+    ReadbackScope trace(ReadbackSource::GuestDma, width, height, pixels_size);
+    const auto* threadInfo = RenderThreadInfo::get();
+    trace.identity(colorBuffer, threadInfo ? threadInfo->m_puid : 0);
     FrameBuffer* fb = FrameBuffer::getFB();
     if (!fb) {
-        GFXSTREAM_WARNING("%s: framebuffer cannot be found!", __func__);
+        trace.result(false);
+        if (ReadbackDiagnostics::get().shouldLog(DiagnosticEvent::DmaMissingFramebuffer)) {
+            GFXSTREAM_WARNING("%s: framebuffer cannot be found!", __func__);
+        }
         return -1;
     }
 
-    fb->readColorBufferDeprecated(colorBuffer, x, y, width, height, format,
-                                  type, pixels, pixels_size);
+    trace.result(fb->readColorBufferDeprecated(colorBuffer, x, y, width, height, format, type,
+                                               pixels, pixels_size));
     return 0;
 }
 
