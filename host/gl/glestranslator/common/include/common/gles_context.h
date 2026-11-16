@@ -320,6 +320,7 @@ public:
         return s_glSupport.ext_GL_EXT_shader_framebuffer_fetch;
     }
     virtual ~GLEScontext();
+    static bool isNativeGlCleanupAllowed();
     virtual int getMaxTexUnits() = 0;
     virtual int getMaxCombinedTexUnits() { return getMaxTexUnits(); }
     virtual void drawValidate(void);

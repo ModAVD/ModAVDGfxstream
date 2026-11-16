@@ -159,6 +159,10 @@ struct EGLiface {
 
     // When we need to get function pointers via eglGetProcAddress.
     std::function<void*(const char*)> getProcAddress;
+
+    // This must query EGL's TLS, not a separate TLS flag in each GLES DLL.
+    // False during CPU-only destruction after the native context cannot bind.
+    bool (*isNativeGlCleanupAllowed)();
 };
 
 typedef GLESiface* (*__translator_getGLESIfaceFunc)(const EGLiface*);

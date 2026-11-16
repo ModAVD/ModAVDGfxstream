@@ -20,6 +20,7 @@
 #include "egl_pbuffer_surface.h"
 #include "thread_info.h"
 #include "gfxstream/common/logging.h"
+#include "render-utils/readback_diagnostics.h"
 
 #include <common/gles_context.h>
 #include <memory>
@@ -107,10 +108,13 @@ EglContext::~EglContext()
     SurfacePtr rebindRead = nullptr;
     SurfacePtr rebindDraw = nullptr;
     std::unique_ptr<EglPbufferSurface> pbSurface;
-    if (rebindCtx == this) {
+    bool nativeCleanup = m_native && rebindCtx == this;
+    bool bindingAttempted = nativeCleanup;
+    const char* failure = "missing-native-context";
+    if (nativeCleanup) {
         // this context is current, no need to rebind.
         rebindCtx = nullptr;
-    } else {
+    } else if (m_native) {
         if (rebindCtx && !m_dpy->getContext((EGLContext)SafePointerFromUInt(
                             rebindCtx->getHndl()))) {
             rebindCtx = nullptr;
@@ -128,43 +132,59 @@ EglContext::~EglContext()
         pbInfo.hasMipmap = false;
         EglOS::Surface* pb = m_dpy->nativeType()->createPbufferSurface(
                 m_config->nativeFormat(), &pbInfo);
-        assert(pb);
         if (pb) {
-            // This can fail for real, e.g. with ERROR_BUSY on Windows while
-            // the context is current on another thread. Do not assert: the
-            // GL objects are then not released through this context, but
-            // the native context itself is still destroyed.
-            if (!m_dpy->nativeType()->makeCurrent(pb, pb, m_native.get())) {
-                GFXSTREAM_ERROR("Failed to make EGL context %p current to destroy it",
-                                this);
-            }
+            bindingAttempted = true;
+            nativeCleanup = m_dpy->nativeType()->makeCurrent(pb, pb, m_native.get());
+            failure = "make-current";
             pbSurface->setNativePbuffer(pb);
+        } else {
+            failure = "create-pbuffer";
         }
     }
     //
-    // release GL resources. m_shareGroup, m_mngr and m_glesContext hold
-    // smart pointers to share groups. We must clean them up when the context
-    // is current.
+    // Release the shared CPU owners even when binding failed. Their GL
+    // destruction requires this context to be current.
     //
-    g_eglInfo->getIface(version())->setShareGroup(m_glesContext, {});
-    if (m_mngr) {
-        m_mngr->deleteShareGroup(m_native.get());
+    {
+        // Resource destructors in all translator DLLs query EGL's TLS through
+        // EGLiface. CPU ownership is released in either case; GL destruction
+        // is allowed only after this native context was successfully bound.
+        ScopedNativeGlCleanup cleanup(nativeCleanup);
+        if (!thread->nativeGlCleanupAllowed) {
+            using namespace gfxstream::host;
+            ReadbackDiagnostics::get().eglContextCpuOnly();
+            if (ReadbackDiagnostics::get().shouldLog(DiagnosticEvent::EglContextCpuOnly)) {
+                GFXSTREAM_ERROR(
+                    "MAS: EGL context cleanup is CPU-only handle=%u reason=%s; "
+                    "native GL resources may remain",
+                    m_hndl, nativeCleanup ? "outer-cpu-only-cleanup" : failure);
+            }
+        }
+        g_eglInfo->getIface(version())->setShareGroup(m_glesContext, {});
+        if (m_mngr) {
+            m_mngr->deleteShareGroup(m_native.get());
+        }
+        m_shareGroup.reset();
+        g_eglInfo->getIface(version())->deleteGLESContext(m_glesContext);
+        m_glesContext = nullptr;
     }
-    m_shareGroup.reset();
-
-    //
-    // call the client-api to remove the GLES context
-    //
-    g_eglInfo->getIface(version())->deleteGLESContext(m_glesContext);
     //
     // restore the previous context
     //
-    if (rebindCtx) {
-        m_dpy->nativeType()->makeCurrent(rebindRead.get() ? rebindRead->native() : nullptr,
-                                         rebindDraw.get() ? rebindDraw->native() : nullptr,
-                                         rebindCtx->nativeType());
-    } else {
-        m_dpy->nativeType()->makeCurrent(nullptr, nullptr, nullptr);
+    if (bindingAttempted) {
+        const bool restored = rebindCtx
+            ? m_dpy->nativeType()->makeCurrent(rebindRead ? rebindRead->native() : nullptr,
+                                              rebindDraw ? rebindDraw->native() : nullptr,
+                                              rebindCtx->nativeType())
+            : m_dpy->nativeType()->makeCurrent(nullptr, nullptr, nullptr);
+        if (!restored) {
+            using namespace gfxstream::host;
+            ReadbackDiagnostics::get().eglContextRestoreFailed();
+            if (ReadbackDiagnostics::get().shouldLog(DiagnosticEvent::EglContextRestoreFailed)) {
+                GFXSTREAM_ERROR("Failed to restore native context after destroying EGL context %u",
+                                m_hndl);
+            }
+        }
     }
 }
 

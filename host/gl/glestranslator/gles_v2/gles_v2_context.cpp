@@ -187,11 +187,12 @@ GLESv2Context::GLESv2Context(int maj, int min, GlobalNameSpace* globalNameSpace,
 }
 
 GLESv2Context::~GLESv2Context() {
-    if (m_emulatedClientIBO) {
+    const bool nativeCleanup = isNativeGlCleanupAllowed();
+    if (nativeCleanup && m_emulatedClientIBO) {
         s_glDispatch.glDeleteBuffers(1, &m_emulatedClientIBO);
     }
 
-    if (!m_emulatedClientVBOs.empty()) {
+    if (nativeCleanup && !m_emulatedClientVBOs.empty()) {
         s_glDispatch.glDeleteBuffers(
             m_emulatedClientVBOs.size(),
             &m_emulatedClientVBOs[0]);

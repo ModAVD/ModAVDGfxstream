@@ -386,6 +386,11 @@ EGLiface* GLEScontext::eglIface() {
     return s_eglIface;
 }
 
+bool GLEScontext::isNativeGlCleanupAllowed() {
+    // A context whose initialization never completed has no native GL owners.
+    return s_eglIface && s_eglIface->isNativeGlCleanupAllowed();
+}
+
 // static
 void GLEScontext::initEglIface(EGLiface* iface) {
     if (!s_eglIface) s_eglIface = iface;
@@ -583,8 +588,9 @@ GLEScontext::GLEScontext(GlobalNameSpace* globalNameSpace,
 
 GLEScontext::~GLEScontext() {
     auto& gl = dispatcher();
+    const bool nativeCleanup = isNativeGlCleanupAllowed();
 
-    if (m_blitState.program) {
+    if (nativeCleanup && m_blitState.program) {
         gl.glDeleteProgram(m_blitState.program);
         gl.glDeleteTextures(1, &m_blitState.tex);
         gl.glDeleteVertexArrays(1, &m_blitState.vao);
@@ -592,14 +598,14 @@ GLEScontext::~GLEScontext() {
         gl.glDeleteFramebuffers(1, &m_blitState.fbo);
     }
 
-    if (m_textureEmulationProg) {
+    if (nativeCleanup && m_textureEmulationProg) {
         gl.glDeleteProgram(m_textureEmulationProg);
         gl.glDeleteTextures(2, m_textureEmulationTextures);
         gl.glDeleteFramebuffers(1, &m_textureEmulationFBO);
         gl.glDeleteVertexArrays(1, &m_textureEmulationVAO);
     }
 
-    if (m_defaultFBO) {
+    if (nativeCleanup && m_defaultFBO) {
         gl.glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
         gl.glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, 0);
         gl.glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
@@ -608,7 +614,7 @@ GLEScontext::~GLEScontext() {
         gl.glDeleteFramebuffers(1, &m_defaultFBO);
     }
 
-    if (m_defaultReadFBO && (m_defaultReadFBO != m_defaultFBO)) {
+    if (nativeCleanup && m_defaultReadFBO && (m_defaultReadFBO != m_defaultFBO)) {
         gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, m_defaultReadFBO);
         gl.glFramebufferRenderbuffer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, 0);
         gl.glFramebufferRenderbuffer(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);

@@ -84,6 +84,7 @@ NamedObject::NamedObject(GenNameInfo genNameInfo,
 }
 
 NamedObject::~NamedObject() {
+    if (!GLEScontext::isNativeGlCleanupAllowed()) return;
     gfxstream::base::AutoLock _lock(m_globalNameSpace->m_lock);
     assert(GLEScontext::dispatcher().isInitialized());
     switch (m_type) {

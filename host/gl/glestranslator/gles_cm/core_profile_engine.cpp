@@ -35,7 +35,7 @@ CoreProfileEngine::CoreProfileEngine(GLEScmContext* ctx, bool onGles) :
 }
 
 CoreProfileEngine::~CoreProfileEngine() {
-    teardown();
+    if (GLEScontext::isNativeGlCleanupAllowed()) teardown();
 }
 
 static const uint32_t sDrawTexIbo[] = {

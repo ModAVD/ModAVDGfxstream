@@ -71,6 +71,7 @@ static bool unbindAndDestroyAuxiliaryContext(
 static bool bindAuxiliaryContext(
     EGLContext context, EGLSurface surface);
 static bool unbindAuxiliaryContext();
+static bool isNativeGlCleanupAllowed();
 
 } // namespace translator
 } // namespace egl
@@ -97,6 +98,7 @@ static const EGLiface s_eglIface = {
     .bindAuxiliaryContext = translator::egl::bindAuxiliaryContext,
     .unbindAuxiliaryContext = translator::egl::unbindAuxiliaryContext,
     .getProcAddress = translator::egl::getProcAddressFromEGL,
+    .isNativeGlCleanupAllowed = translator::egl::isNativeGlCleanupAllowed,
 };
 
 static void initGLESx(GLESVersion version) {
@@ -261,6 +263,10 @@ GLEScontext* getGLESContext()
 {
     ThreadInfo* thread  = getThreadInfo();
     return thread->glesContext;
+}
+
+static bool isNativeGlCleanupAllowed() {
+    return getThreadInfo()->nativeGlCleanupAllowed;
 }
 
 GlLibrary* getGlLibrary() {
@@ -994,12 +1000,8 @@ static EGLContext eglCreateOrLoadContext(EGLDisplay display, EGLConfig config,
     }
 
     const GLESiface* iface = g_eglInfo->getIface(glesVersion);
-    GLEScontext* glesCtx = NULL;
-    if(iface) {
-        glesCtx = iface->createGLESContext(major_version, minor_version,
-                dpy->getGlobalNameSpace(), stream);
-    } else { // there is no interface for this gles version
-                RETURN_ERROR(EGL_NO_CONTEXT,EGL_BAD_ATTRIBUTE);
+    if (!iface) {
+        RETURN_ERROR(EGL_NO_CONTEXT,EGL_BAD_ATTRIBUTE);
     }
 
     if(share_context != EGL_NO_CONTEXT) {
@@ -1011,6 +1013,8 @@ static EGLContext eglCreateOrLoadContext(EGLDisplay display, EGLConfig config,
         assert(shareGroupId);
     }
 
+    GLEScontext* glesCtx = iface->createGLESContext(major_version, minor_version,
+            dpy->getGlobalNameSpace(), stream);
     gfxstream::base::AutoLock mutex(*graphicsDriverLock());
 
     ContextPtr ctx(new EglContext(dpy, shareGroupId, cfg,
@@ -1020,10 +1024,9 @@ static EGLContext eglCreateOrLoadContext(EGLDisplay display, EGLConfig config,
                                   stream));
     if(ctx->nativeType()) {
         return dpy->addContext(ctx);
-    } else {
-        iface->deleteGLESContext(glesCtx);
     }
 
+    // EglContext owns glesCtx even when native context creation failed.
     return EGL_NO_CONTEXT;
 }
 

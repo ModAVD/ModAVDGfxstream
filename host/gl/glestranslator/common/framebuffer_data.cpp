@@ -426,7 +426,7 @@ void FramebufferData::detachObject(int idx) {
         rbData->attachedPoint = 0;
     }
 
-    if(m_attachPoints[idx].owned)
+    if(m_attachPoints[idx].owned && GLEScontext::isNativeGlCleanupAllowed())
     {
         switch(m_attachPoints[idx].target)
         {
@@ -460,6 +460,11 @@ void FramebufferData::refreshSeparateDepthStencilAttachmentState() {
     m_hasSeparateDepthStencil = depthObject && stencilObject && (depthObject != stencilObject);
 
     if (m_hasSeparateDepthStencil) return;
+
+    if (!GLEScontext::isNativeGlCleanupAllowed()) {
+        m_separateDSEmulationRbo = 0;
+        return;
+    }
 
     // Delete the emulated RBO and restore the original
     // if we don't have separate depth/stencil anymore.

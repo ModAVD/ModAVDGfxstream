@@ -33,6 +33,8 @@ enum class DiagnosticEvent {
     CleanupRecovered,
     CleanupAbandoned,
     DmaMissingFramebuffer,
+    EglContextCpuOnly,
+    EglContextRestoreFailed,
     Count
 };
 
@@ -130,6 +132,26 @@ class ReadbackDiagnostics {
         ++mResources.threadsCreated;
         ++mResourceRevision;
     }
+    void eglContextCpuOnly() {
+        std::optional<Snapshot> summary;
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            ++mResources.eglContextCpuOnly;
+            ++mResourceRevision;
+            summary = snapshotLocked();
+        }
+        logSummary(summary);
+    }
+    void eglContextRestoreFailed() {
+        std::optional<Snapshot> summary;
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            ++mResources.eglContextRestoreFailures;
+            ++mResourceRevision;
+            summary = snapshotLocked();
+        }
+        logSummary(summary);
+    }
     void renderThreadReleased() {
         std::optional<Snapshot> summary;
         {
@@ -176,6 +198,8 @@ class ReadbackDiagnostics {
         uint64_t created = 0, released = 0, liveRgba = 0;
         uint64_t deferred = 0, recovered = 0, abandoned = 0, pendingRgba = 0;
         uint64_t threadsCreated = 0, threadsReleased = 0;
+        uint64_t eglContextCpuOnly = 0;
+        uint64_t eglContextRestoreFailures = 0;
     };
     struct Snapshot {
         std::array<Readbacks, kSourceCount> rows{};
@@ -242,7 +266,8 @@ class ReadbackDiagnostics {
             "MAS: readback resources cbCreated=%llu cbReleased=%llu "
             "cbRgbaEstimateBytes=%llu cleanupDeferred=%llu cleanupRecovered=%llu "
             "cleanupAbandoned=%llu pendingRgbaEstimateBytes=%llu "
-            "threadsCreated=%llu threadsReleased=%llu",
+            "threadsCreated=%llu threadsReleased=%llu eglContextCpuOnly=%llu "
+            "eglContextRestoreFailures=%llu",
             static_cast<unsigned long long>(resources.created),
             static_cast<unsigned long long>(resources.released),
             static_cast<unsigned long long>(resources.liveRgba),
@@ -251,7 +276,9 @@ class ReadbackDiagnostics {
             static_cast<unsigned long long>(resources.abandoned),
             static_cast<unsigned long long>(resources.pendingRgba),
             static_cast<unsigned long long>(resources.threadsCreated),
-            static_cast<unsigned long long>(resources.threadsReleased));
+            static_cast<unsigned long long>(resources.threadsReleased),
+            static_cast<unsigned long long>(resources.eglContextCpuOnly),
+            static_cast<unsigned long long>(resources.eglContextRestoreFailures));
     }
 
     std::mutex mMutex;

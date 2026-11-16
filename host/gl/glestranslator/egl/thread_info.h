@@ -33,8 +33,25 @@ struct ThreadInfo {
     GLEScontext*         glesContext = nullptr;
     ShareGroupPtr        shareGroup;
     ObjectNameManager*   objManager = nullptr;
+    // Shared through EGLiface so every translator library observes the same
+    // per-thread decision while releasing an unbindable context's CPU owners.
+    bool nativeGlCleanupAllowed = true;
 };
 
 ThreadInfo* getThreadInfo();
+
+class ScopedNativeGlCleanup {
+public:
+    explicit ScopedNativeGlCleanup(bool allowed)
+        : mThread(getThreadInfo()), mPrevious(mThread->nativeGlCleanupAllowed) {
+        mThread->nativeGlCleanupAllowed = mPrevious && allowed;
+    }
+    ~ScopedNativeGlCleanup() { mThread->nativeGlCleanupAllowed = mPrevious; }
+    ScopedNativeGlCleanup(const ScopedNativeGlCleanup&) = delete;
+    ScopedNativeGlCleanup& operator=(const ScopedNativeGlCleanup&) = delete;
+private:
+    ThreadInfo* mThread;
+    bool mPrevious;
+};
 
 #endif
